@@ -98,7 +98,9 @@ class Ground:
                 np.add(out, foam[..., None], out=out)
         out *= sample(F["shade"], x0, y0)[..., None]
         arr = np.clip(out, 0, 255).astype(np.uint8)
-        return pygame.surfarray.make_surface(arr.swapaxes(0, 1)).convert()
+        # No alpha channel, whatever the window has: a plain convert() keeps one on macOS, and decals
+        # stamped into such a chunk zero it, which leaves boxes that glows and flashes cannot light.
+        return pygame.surfarray.make_surface(arr.swapaxes(0, 1)).convert((0xFF0000, 0xFF00, 0xFF, 0))
 
     def minimap(self, w, h):
         m = self.map
