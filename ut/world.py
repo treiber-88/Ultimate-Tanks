@@ -302,7 +302,7 @@ class World:
                         continue
                     reach = r + 16 if is_tree else r * 0.8
                     if (ox - x) ** 2 + (oy - y) ** 2 < reach * reach:
-                        self.crush(idx)
+                        self.crush(idx, emit=not self.mirror)
                         if is_tree:
                             t.speed *= 0.6
 
@@ -536,7 +536,7 @@ class World:
                        t.sel[0], t.sel[1], round(max(0.0, t.respawn), 1), t.kills, t.deaths,
                        round(t.speed, 0)])
         zn = [[z[0], z[1], round(z[2]), round(z[3]), z[4], round(z[5], 1)] for z in self.zones]
-        return dict(time=round(self.time, 2), sc=list(self.scores), over=self.over, tk=tk, zn=zn)
+        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn)
 
     def roster(self):
         return [[t.pid, t.name, list(t.color), t.team, 1 if t.is_ai else 0] for t in self.players.values()]

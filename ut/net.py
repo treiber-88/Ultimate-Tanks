@@ -14,9 +14,9 @@ from . import data
 from .data import TANKS, TANK_INDEX, WEAPON_INDEX
 from .world import World, angle_diff
 
-SNAP_RATE = 20.0
+SNAP_RATE = 30.0
 DISCOVER, FOUND = b"UTANKS?", b"UTANKS!"
-INPUT_RATE = 30.0
+INPUT_RATE = 60.0
 MAX_HUMANS = 16
 
 
@@ -28,10 +28,11 @@ class Conn:
         self.cid = cid
         self.inbox = inbox
         self.alive = True
-        self.lock = threading.Lock()
+        self.out = queue.Queue()
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         sock.settimeout(None)
         threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._write, daemon=True).start()
 
     def _read(self):
         buf = b""
@@ -57,17 +58,28 @@ class Conn:
         self.inbox.put((self.cid, {"t": "_drop"}))
 
     def send(self, msg):
-        if not self.alive:
-            return
-        raw = (json.dumps(msg, separators=(",", ":")) + "\n").encode("utf-8")
+        """Queue a message. Never blocks: a writer thread does the actual sending."""
+        if self.alive:
+            self.out.put((json.dumps(msg, separators=(",", ":")) + "\n").encode("utf-8"))
+
+    def backlog(self):
+        """How many messages are still waiting to go out (large = this link cannot keep up)."""
+        return self.out.qsize()
+
+    def _write(self):
         try:
-            with self.lock:
+            while True:
+                raw = self.out.get()
+                if raw is None:
+                    break
                 self.sock.sendall(raw)
         except OSError:
-            self.alive = False
+            pass
+        self.alive = False
 
     def close(self):
         self.alive = False
+        self.out.put(None)
         try:
             self.sock.shutdown(socket.SHUT_RDWR)
         except OSError:
@@ -298,8 +310,9 @@ class LocalSession:
         self.can_pause = server is None
         self.lost = None
         self._snap_t = 0.0
-        self._outbox = []
-        self._roster_sent = None
+        self._pending = {}          # connection id -> events not yet delivered to that client
+        self._roster_sent = {}
+        self._ack = {}              # connection id -> timestamp of the newest input we applied
 
     def me(self):
         return self.world.players.get(self.pid)
@@ -327,7 +340,9 @@ class LocalSession:
         events = w.events
         w.events = []
         if self.server:
-            self._outbox.extend(events)
+            if events:
+                for cid in self.remote:
+                    self._pending.setdefault(cid, []).extend(events)
             self._snap_t += dt
             if self._snap_t >= 1.0 / SNAP_RATE:
                 self._snap_t = 0.0
@@ -344,6 +359,8 @@ class LocalSession:
                     if pid is not None:
                         w.remove_player(pid)
                         del self.remote[cid]
+                    for d in (self._pending, self._roster_sent, self._ack):
+                        d.pop(cid, None)
                     self.server.drop(cid)
                 elif kind == "join" and pid is None:
                     if len(self.remote) + 1 >= MAX_HUMANS:
@@ -357,6 +374,7 @@ class LocalSession:
                 elif pid is not None and pid in w.players:
                     t = w.players[pid]
                     if kind == "in":
+                        self._ack[cid] = float(msg.get("ts", 0.0))
                         m = msg.get("m", [0, 0])
                         t.throttle = max(-1.0, min(1.0, float(m[0])))
                         t.turn = max(-1.0, min(1.0, float(m[1])))
@@ -376,19 +394,25 @@ class LocalSession:
     def _broadcast(self):
         w = self.world
         self.server.info["players"] = sum(1 for t in w.players.values() if not t.is_ai)
-        snap = w.snapshot()
-        snap["t"] = "snap"
-        snap["ev"] = self._outbox
-        self._outbox = []
+        base = w.snapshot()
+        base["t"] = "snap"
         roster = w.roster()
-        if roster != self._roster_sent:
-            self._roster_sent = roster
-            snap["roster"] = roster
         for cid, pid in list(self.remote.items()):
+            conn = self.server.conns.get(cid)
+            if conn is None or conn.backlog() > 2:
+                if conn and len(self._pending.get(cid, ())) > 8000:
+                    conn.close()            # hopelessly behind (frozen or gone): let it drop
+                continue                    # that link is behind: skip a beat, its events wait in _pending
+            snap = dict(base)
+            snap["ev"] = self._pending.pop(cid, [])
+            snap["ack"] = self._ack.get(cid, 0.0)
+            if self._roster_sent.get(cid) != roster:
+                self._roster_sent[cid] = roster
+                snap["roster"] = roster
             t = w.players.get(pid)
             if t:
                 snap["me"] = [t.credits, t.tanks, t.weapons, t.earned]
-            self.server.send(cid, snap)
+            conn.send(snap)
 
     def close(self):
         if self.server:
@@ -397,10 +421,18 @@ class LocalSession:
 
 
 class RemoteSession:
-    """A client connected to somebody else's game."""
+    """A client connected to somebody else's game.
+
+    Two things keep it smooth on an imperfect connection:
+    * other tanks are drawn slightly in the past, interpolated between buffered snapshots by the host's clock,
+      so uneven packet arrival does not show;
+    * the player's own tank is simulated locally the moment a key is pressed, then gently corrected toward
+      what the host says actually happened.
+    """
 
     is_host = False
     can_pause = False
+    MIN_DELAY, MAX_DELAY = 0.07, 0.35
 
     def __init__(self, conn, inbox, start):
         self.conn = conn
@@ -411,12 +443,15 @@ class RemoteSession:
             self.world.crush(int(idx), emit=False)
         self.pid = start["pid"]
         self.lost = None
-        self._prev = None
-        self._next = None
-        self._next_at = 0.0
-        self._interval = 1.0 / SNAP_RATE
+        self._snaps = []            # buffered snapshots, oldest first
+        self._offset = None         # host clock minus our clock
+        self._late = 0.0            # how late packets have recently been arriving (jitter)
+        self._delay = 0.1           # how far in the past we draw other tanks
         self._input = (0.0, 0.0, 0.0, 0, 0.0)
         self._input_t = 0.0
+        self._clock = 0.0           # our own running time, stamped on inputs
+        self._history = []          # (clock, x, y, angle) of our predicted tank, for reconciliation
+        self._was_alive = False
 
     def me(self):
         return self.world.players.get(self.pid)
@@ -436,10 +471,12 @@ class RemoteSession:
         self.conn.send({"t": "wsel", "slot": slot, "i": idx})
         return True
 
+    # -- per frame ---------------------------------------------------------------
     def update(self, dt):
         w = self.world
         events = []
         now = time.perf_counter()
+        self._clock += dt
         while True:
             try:
                 _cid, msg = self.inbox.get_nowait()
@@ -447,38 +484,17 @@ class RemoteSession:
                 break
             kind = msg.get("t")
             if kind == "snap":
-                if "roster" in msg:
-                    w.apply_roster(msg["roster"])
-                for e in msg.get("ev", ()):
-                    e = tuple(e)
-                    if e[0] == "shot":
-                        owner = w.players.get(e[1])
-                        w.spawn_projectile(e[1], owner.team if owner else 0, e[2], e[3], e[4], e[5], e[6])
-                        if owner:
-                            wp = data.WEAPONS[e[2]]
-                            if wp["slot"] == data.SHELL:
-                                owner.recoil = 1.0
-                            owner.cool[e[2]] = w.reload_time(owner, wp)
-                    elif e[0] == "hit":
-                        w.projectiles.pop(e[1], None)
-                    elif e[0] == "crush":
-                        w.crush(int(e[1]), emit=False)
-                    events.append(e)
-                if self._next is not None:
-                    self._interval = 0.8 * self._interval + 0.2 * max(0.02, min(0.25, now - self._next_at))
-                self._prev, self._next, self._next_at = self._next, msg, now
-                w.time, w.scores, w.over = msg["time"], msg["sc"], msg["over"]
-                w.zones = [z + [0, -1, -1] for z in msg["zn"]]
-                me = w.players.get(self.pid)
-                if me and "me" in msg:
-                    me.credits, me.tanks, me.weapons, me.earned = msg["me"]
+                self._on_snapshot(msg, now, events)
             elif kind == "_drop":
                 self.lost = "Lost connection to the host."
             elif kind == "error":
                 self.lost = str(msg.get("msg", "Disconnected."))
-        self._interpolate(now)
+        self._show_others(now)
+        self._predict_me(dt)
         w._step_projectiles(dt)
         for t in w.players.values():
+            if t.pid == self.pid and t.alive:
+                continue                     # our own timers are advanced by the prediction step
             if t.recoil > 0:
                 t.recoil = max(0.0, t.recoil - dt * 4)
             for k in t.cool:
@@ -489,31 +505,92 @@ class RemoteSession:
             self._input_t = 0.0
             thr, turn, aim, f, dist = self._input
             self.conn.send({"t": "in", "m": [round(thr, 2), round(turn, 2)], "a": round(aim, 3), "f": f,
-                            "d": round(dist)})
+                            "d": round(dist), "ts": round(self._clock, 3)})
         if not self.conn.alive and not self.lost:
             self.lost = "Lost connection to the host."
         return events
 
-    def _interpolate(self, now):
-        if self._next is None:
-            return
+    def _on_snapshot(self, msg, now, events):
         w = self.world
-        k = min(1.0, (now - self._next_at) / self._interval) if self._prev else 1.0
-        prev = {row[0]: row for row in self._prev["tk"]} if self._prev else {}
-        for row in self._next["tk"]:
+        if "roster" in msg:
+            w.apply_roster(msg["roster"])
+        for e in msg.get("ev", ()):
+            e = tuple(e)
+            if e[0] == "shot":
+                owner = w.players.get(e[1])
+                w.spawn_projectile(e[1], owner.team if owner else 0, e[2], e[3], e[4], e[5], e[6])
+                if owner:
+                    wp = data.WEAPONS[e[2]]
+                    if wp["slot"] == data.SHELL:
+                        owner.recoil = 1.0
+                    owner.cool[e[2]] = w.reload_time(owner, wp)
+            elif e[0] == "hit":
+                w.projectiles.pop(e[1], None)
+            elif e[0] == "crush":
+                w.crush(int(e[1]), emit=False)
+            events.append(e)
+
+        # clock sync: the least-delayed packets define the host clock; lateness beyond that is jitter
+        sample = msg["time"] - now
+        if self._offset is None or sample > self._offset:
+            self._offset = sample
+        else:
+            self._late = max(self._late * 0.97, self._offset - sample)
+            self._offset += (sample - self._offset) * 0.002
+        want = min(self.MAX_DELAY, max(self.MIN_DELAY, 1.5 / SNAP_RATE + self._late * 1.3))
+        self._delay += (want - self._delay) * 0.08
+        self._snaps.append(msg)
+        if len(self._snaps) > 40:
+            del self._snaps[:-40]
+
+        # things that are not interpolated are taken from the newest snapshot straight away
+        w.time, w.scores, w.over = msg["time"], msg["sc"], msg["over"]
+        w.zones = [z + [0, -1, -1] for z in msg["zn"]]
+        me = w.players.get(self.pid)
+        if me and "me" in msg:
+            me.credits, me.tanks, me.weapons, me.earned = msg["me"]
+        for row in msg["tk"]:
             t = w.players.get(row[0])
             if t is None:
                 continue
-            pid, alive, x, y, ang, tur, hp, ti, shield, s0, s1, resp, kills, deaths, speed = row
-            key = TANKS[ti]["key"]
+            key = TANKS[row[7]]["key"]
             if t.tank_key != key:
                 if key not in t.tanks:
                     t.tanks.append(key)
+                if t.pid != self.pid:
+                    t.weapons = [w_["key"] for w_ in data.WEAPONS]     # mirrors do not track ownership
                 t.set_tank(key)
-                if t.tank_key != key:           # mirror tanks do not track ownership: force it
-                    t.tanks.append(key)
-                    t.weapons = [w_["key"] for w_ in data.WEAPONS]
-                    t.set_tank(key)
+            t.hp, t.shield, t.respawn = row[6], (1.0 if row[8] else 0.0), row[11]
+            t.sel = [row[9], row[10]]
+            t.kills, t.deaths = row[12], row[13]
+            if t.pid == self.pid:
+                self._reconcile(t, row, msg.get("ack", 0.0))
+
+    def _show_others(self, now):
+        """Place every other tank where it was `_delay` seconds ago, between two buffered snapshots."""
+        if not self._snaps:
+            return
+        w = self.world
+        rt = now + self._offset - self._delay
+        snaps = self._snaps
+        while len(snaps) > 2 and snaps[1]["time"] <= rt:
+            snaps.pop(0)
+        a = snaps[0]
+        b = snaps[1] if len(snaps) > 1 else a
+        span = b["time"] - a["time"]
+        k = (rt - a["time"]) / span if span > 1e-6 else 1.0
+        ahead = 0.0
+        if k > 1.0:                          # nothing newer has arrived yet: coast briefly on last known speed
+            ahead = min(rt - b["time"], 0.2)
+            k = 1.0
+        k = max(0.0, k)
+        prev = {row[0]: row for row in a["tk"]}
+        for row in b["tk"]:
+            pid = row[0]
+            t = w.players.get(pid)
+            if t is None or pid == self.pid:
+                continue
+            _pid, alive, x, y, ang, tur = row[:6]
             p = prev.get(pid)
             if p and p[1] and alive and abs(p[2] - x) < 400 and abs(p[3] - y) < 400:
                 t.x = p[2] + (x - p[2]) * k
@@ -522,10 +599,57 @@ class RemoteSession:
                 t.turret = p[5] + angle_diff(tur, p[5]) * k
             else:
                 t.x, t.y, t.angle, t.turret = x, y, ang, tur
+            t.speed = row[14]
+            if ahead and alive:
+                t.x += math.cos(t.angle) * t.speed * ahead
+                t.y += math.sin(t.angle) * t.speed * ahead
             t.alive = bool(alive)
-            t.hp, t.shield, t.respawn = hp, (1.0 if shield else 0.0), resp
-            t.sel = [s0, s1]
-            t.kills, t.deaths, t.speed = kills, deaths, speed
+
+    # -- our own tank ------------------------------------------------------------------
+    def _predict_me(self, dt):
+        me = self.me()
+        if not me or not me.alive or self.world.over is not None:
+            return
+        me.throttle, me.turn, me.aim = self._input[0], self._input[1], self._input[2]
+        self.world._move(me, dt)
+        self._history.append((self._clock, me.x, me.y, me.angle))
+        if len(self._history) > 180:
+            del self._history[:-180]
+
+    def _reconcile(self, me, row, ack):
+        """The host says where we were when it applied input `ack`. Compare with where we thought we were
+        at that moment and fold the difference into our present position, a little at a time."""
+        _pid, alive, x, y, ang, tur = row[:6]
+        if not alive:
+            me.alive = False
+            self._was_alive = False
+            self._history.clear()
+            return
+        if not self._was_alive:              # just (re)spawned: take the host's word for everything
+            me.alive = True
+            me.x, me.y, me.angle, me.turret, me.speed = x, y, ang, tur, 0.0
+            self._was_alive = True
+            self._history.clear()
+            return
+        past = None
+        for h in self._history:
+            if h[0] <= ack:
+                past = h
+            else:
+                break
+        if past is None:
+            past = (0.0, me.x, me.y, me.angle)
+        ex, ey, ea = x - past[1], y - past[2], angle_diff(ang, past[3])
+        if ex * ex + ey * ey > 260 * 260:    # badly out of step (teleport, tank swap): snap
+            gx, gy, ga = ex, ey, ea
+        else:
+            gx, gy, ga = ex * 0.12, ey * 0.12, ea * 0.12
+        if self.world.map.blocked_circle(me.x + gx, me.y + gy, me.radius):
+            gx = gy = 0.0
+        me.x += gx
+        me.y += gy
+        me.angle += ga
+        self._history = [(c, hx + gx, hy + gy, ha + ga) for c, hx, hy, ha in self._history if c >= past[0]]
 
     def close(self):
         self.conn.close()

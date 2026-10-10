@@ -158,5 +158,6 @@ python tools/shots.py out_dir 1920 1080   # drives every screen off-screen and s
 python tools/net_test.py                  # host + client over localhost
 python tools/flow_test.py out_dir          # commander creation, shop, save/continue, client battle
 python tools/aim_test.py                  # shots land on the cursor point; bush and tree crushing
+python tools/lag_test.py 40 50            # multiplayer smoothness over a simulated bad connection
 python tools/profile_battle.py 1920 1080  # frame-time profile of a 20 v 20 battle
 ```
