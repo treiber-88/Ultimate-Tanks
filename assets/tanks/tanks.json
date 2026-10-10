@@ -1,0 +1,126 @@
+{
+ "basic": {
+  "length": 5.2,
+  "width": 3.0,
+  "turret_x": 0.15,
+  "muzzles": [
+   [
+    2.7,
+    0.0
+   ]
+  ],
+  "hull_radius": 3.7124789561693143,
+  "turret_radius": 2.85,
+  "hull_frame": 160,
+  "turret_frame": 124,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ },
+ "medium": {
+  "length": 6.2,
+  "width": 3.4600000000000004,
+  "turret_x": 0.1,
+  "muzzles": [
+   [
+    3.9,
+    0.0
+   ]
+  ],
+  "hull_radius": 4.26279251195739,
+  "turret_radius": 4.05,
+  "hull_frame": 182,
+  "turret_frame": 172,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ },
+ "heavy": {
+  "length": 6.9,
+  "width": 4.06,
+  "turret_x": -0.1,
+  "muzzles": [
+   [
+    4.0,
+    0.42
+   ],
+   [
+    4.0,
+    -0.42
+   ]
+  ],
+  "hull_radius": 4.709235606762524,
+  "turret_radius": 4.15,
+  "hull_frame": 200,
+  "turret_frame": 176,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ },
+ "mammoth": {
+  "length": 8.0,
+  "width": 4.859999999999999,
+  "turret_x": -0.2,
+  "muzzles": [
+   [
+    4.7,
+    0.55
+   ],
+   [
+    4.7,
+    -0.55
+   ]
+  ],
+  "hull_radius": 5.381765509570256,
+  "turret_radius": 4.8500000000000005,
+  "hull_frame": 226,
+  "turret_frame": 206,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ },
+ "goliath": {
+  "length": 9.2,
+  "width": 5.76,
+  "turret_x": -0.3,
+  "muzzles": [
+   [
+    5.6,
+    0.0
+   ],
+   [
+    4.9,
+    0.85
+   ],
+   [
+    4.9,
+    -0.85
+   ]
+  ],
+  "hull_radius": 6.1239611363887665,
+  "turret_radius": 5.75,
+  "hull_frame": 256,
+  "turret_frame": 240,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ },
+ "speed": {
+  "length": 5.6,
+  "width": 2.72,
+  "turret_x": -0.55,
+  "muzzles": [
+   [
+    3.0,
+    0.0
+   ]
+  ],
+  "hull_radius": 3.8385023121003847,
+  "turret_radius": 3.15,
+  "hull_frame": 164,
+  "turret_frame": 136,
+  "frames": 32,
+  "cols": 8,
+  "ppm": 20.0
+ }
+}

@@ -1,0 +1,52 @@
+{
+ "basic_shell": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "tracer": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "gatling": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "heavy_shell": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "combust_shell": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "heavy_tracer": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "heavy_gatling": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "canister": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "death_shell": {
+  "w": 72,
+  "h": 36,
+  "scale": 0.5
+ },
+ "nuke_shell": {
+  "w": 96,
+  "h": 48,
+  "scale": 0.5
+ }
+}

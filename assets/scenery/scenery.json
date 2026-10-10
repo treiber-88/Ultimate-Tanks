@@ -1,0 +1,537 @@
+{
+ "tree0": {
+  "solid_r": 0.7,
+  "canopy": true,
+  "kind": "tree",
+  "w": 212,
+  "h": 202,
+  "ax": 57.2,
+  "ay": 48.1,
+  "height": 6.39,
+  "foot": [
+   6,
+   6,
+   98,
+   86
+  ]
+ },
+ "pine0": {
+  "solid_r": 0.6,
+  "canopy": true,
+  "kind": "tree",
+  "w": 242,
+  "h": 250,
+  "ax": 48.3,
+  "ay": 55.8,
+  "height": 8.47,
+  "foot": [
+   6,
+   6,
+   93,
+   102
+  ]
+ },
+ "bush1": {
+  "solid_r": 0.0,
+  "kind": "bush",
+  "w": 86,
+  "h": 82,
+  "ax": 29.3,
+  "ay": 29.2,
+  "height": 1.15,
+  "foot": [
+   6,
+   6,
+   55,
+   51
+  ]
+ },
+ "boulder1": {
+  "solid_r": 1.71,
+  "kind": "boulder",
+  "w": 140,
+  "h": 144,
+  "ax": 43.0,
+  "ay": 53.4,
+  "height": 1.95,
+  "foot": [
+   6,
+   6,
+   95,
+   99
+  ]
+ },
+ "house1": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 386,
+  "h": 298,
+  "ax": 135.5,
+  "ay": 90.8,
+  "height": 6.79,
+  "foot": [
+   6,
+   6,
+   265,
+   176
+  ]
+ },
+ "house1_r": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 298,
+  "h": 386,
+  "ax": 90.8,
+  "ay": 135.5,
+  "height": 6.79,
+  "foot": [
+   6,
+   6,
+   176,
+   265
+  ]
+ },
+ "mountain0": {
+  "solid": "alpha",
+  "kind": "mountain",
+  "w": 784,
+  "h": 848,
+  "ax": 206.0,
+  "ay": 306.0,
+  "height": 19.33,
+  "foot": [
+   6,
+   6,
+   463,
+   526
+  ]
+ },
+ "tree1": {
+  "solid_r": 0.7,
+  "canopy": true,
+  "kind": "tree",
+  "w": 266,
+  "h": 264,
+  "ax": 64.6,
+  "ay": 63.0,
+  "height": 7.71,
+  "foot": [
+   6,
+   6,
+   129,
+   127
+  ]
+ },
+ "tree2": {
+  "solid_r": 0.7,
+  "canopy": true,
+  "kind": "tree",
+  "w": 190,
+  "h": 196,
+  "ax": 50.7,
+  "ay": 43.6,
+  "height": 5.66,
+  "foot": [
+   6,
+   6,
+   87,
+   92
+  ]
+ },
+ "tree3": {
+  "solid_r": 0.7,
+  "canopy": true,
+  "kind": "tree",
+  "w": 244,
+  "h": 242,
+  "ax": 63.7,
+  "ay": 57.3,
+  "height": 7.02,
+  "foot": [
+   6,
+   6,
+   118,
+   117
+  ]
+ },
+ "tree4": {
+  "solid_r": 0.7,
+  "canopy": true,
+  "kind": "tree",
+  "w": 224,
+  "h": 212,
+  "ax": 52.2,
+  "ay": 50.3,
+  "height": 6.39,
+  "foot": [
+   6,
+   6,
+   110,
+   96
+  ]
+ },
+ "pine1": {
+  "solid_r": 0.6,
+  "canopy": true,
+  "kind": "tree",
+  "w": 212,
+  "h": 214,
+  "ax": 42.8,
+  "ay": 45.2,
+  "height": 7.43,
+  "foot": [
+   6,
+   6,
+   80,
+   81
+  ]
+ },
+ "pine2": {
+  "solid_r": 0.6,
+  "canopy": true,
+  "kind": "tree",
+  "w": 280,
+  "h": 282,
+  "ax": 54.6,
+  "ay": 54.2,
+  "height": 10.09,
+  "foot": [
+   6,
+   6,
+   106,
+   108
+  ]
+ },
+ "bush0": {
+  "solid_r": 0.0,
+  "kind": "bush",
+  "w": 80,
+  "h": 74,
+  "ax": 26.6,
+  "ay": 23.2,
+  "height": 0.91,
+  "foot": [
+   6,
+   6,
+   52,
+   46
+  ]
+ },
+ "bush2": {
+  "solid_r": 0.0,
+  "kind": "bush",
+  "w": 62,
+  "h": 62,
+  "ax": 22.6,
+  "ay": 22.3,
+  "height": 0.79,
+  "foot": [
+   6,
+   6,
+   36,
+   37
+  ]
+ },
+ "bush3": {
+  "solid_r": 0.0,
+  "kind": "bush",
+  "w": 78,
+  "h": 80,
+  "ax": 25.9,
+  "ay": 34.2,
+  "height": 1.01,
+  "foot": [
+   6,
+   6,
+   48,
+   51
+  ]
+ },
+ "bush4": {
+  "solid_r": 0.0,
+  "kind": "bush",
+  "w": 64,
+  "h": 70,
+  "ax": 20.5,
+  "ay": 25.6,
+  "height": 0.86,
+  "foot": [
+   6,
+   6,
+   37,
+   42
+  ]
+ },
+ "boulder0": {
+  "solid_r": 1.17,
+  "kind": "boulder",
+  "w": 100,
+  "h": 98,
+  "ax": 36.2,
+  "ay": 32.3,
+  "height": 1.52,
+  "foot": [
+   6,
+   6,
+   63,
+   61
+  ]
+ },
+ "boulder2": {
+  "solid_r": 2.34,
+  "kind": "boulder",
+  "w": 192,
+  "h": 176,
+  "ax": 74.8,
+  "ay": 68.6,
+  "height": 2.78,
+  "foot": [
+   6,
+   6,
+   134,
+   119
+  ]
+ },
+ "boulder3": {
+  "solid_r": 1.44,
+  "kind": "boulder",
+  "w": 124,
+  "h": 112,
+  "ax": 49.3,
+  "ay": 37.2,
+  "height": 1.61,
+  "foot": [
+   6,
+   6,
+   86,
+   72
+  ]
+ },
+ "boulder4": {
+  "solid_r": 2.88,
+  "kind": "boulder",
+  "w": 212,
+  "h": 216,
+  "ax": 84.5,
+  "ay": 71.7,
+  "height": 3.81,
+  "foot": [
+   6,
+   6,
+   138,
+   143
+  ]
+ },
+ "house0": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 322,
+  "h": 272,
+  "ax": 105.5,
+  "ay": 80.8,
+  "height": 6.48,
+  "foot": [
+   6,
+   6,
+   205,
+   156
+  ]
+ },
+ "house0_r": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 272,
+  "h": 322,
+  "ax": 80.8,
+  "ay": 105.5,
+  "height": 6.48,
+  "foot": [
+   6,
+   6,
+   156,
+   205
+  ]
+ },
+ "house2": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 344,
+  "h": 350,
+  "ax": 115.5,
+  "ay": 85.8,
+  "height": 6.63,
+  "foot": [
+   6,
+   6,
+   225,
+   231
+  ]
+ },
+ "house2_r": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 350,
+  "h": 344,
+  "ax": 85.8,
+  "ay": 115.5,
+  "height": 6.63,
+  "foot": [
+   6,
+   6,
+   231,
+   225
+  ]
+ },
+ "house3": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 310,
+  "h": 270,
+  "ax": 95.5,
+  "ay": 76.0,
+  "height": 6.95,
+  "foot": [
+   6,
+   6,
+   185,
+   146
+  ]
+ },
+ "house3_r": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 270,
+  "h": 310,
+  "ax": 76.0,
+  "ay": 95.5,
+  "height": 6.95,
+  "foot": [
+   6,
+   6,
+   146,
+   185
+  ]
+ },
+ "barn0": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 450,
+  "h": 332,
+  "ax": 165.5,
+  "ay": 105.7,
+  "height": 7.04,
+  "foot": [
+   6,
+   6,
+   325,
+   205
+  ]
+ },
+ "barn0_r": {
+  "solid": "alpha",
+  "kind": "house",
+  "w": 332,
+  "h": 450,
+  "ax": 105.7,
+  "ay": 165.5,
+  "height": 7.04,
+  "foot": [
+   6,
+   6,
+   205,
+   325
+  ]
+ },
+ "mountain1": {
+  "solid": "alpha",
+  "kind": "mountain",
+  "w": 1180,
+  "h": 1160,
+  "ax": 406.0,
+  "ay": 386.0,
+  "height": 22.57,
+  "foot": [
+   6,
+   6,
+   806,
+   786
+  ]
+ },
+ "mountain2": {
+  "solid": "alpha",
+  "kind": "mountain",
+  "w": 738,
+  "h": 648,
+  "ax": 246.0,
+  "ay": 192.7,
+  "height": 14.9,
+  "foot": [
+   6,
+   6,
+   486,
+   396
+  ]
+ },
+ "mountain3": {
+  "solid": "alpha",
+  "kind": "mountain",
+  "w": 1358,
+  "h": 1480,
+  "ax": 412.7,
+  "ay": 506.0,
+  "height": 28.84,
+  "foot": [
+   6,
+   6,
+   883,
+   1006
+  ]
+ },
+ "bridge0": {
+  "solid_r": 0.0,
+  "length": 22.0,
+  "width": 9.0,
+  "kind": "bridge",
+  "w": 490,
+  "h": 230,
+  "ax": 226.6,
+  "ay": 96.0,
+  "height": 1.9,
+  "foot": [
+   6,
+   6,
+   447,
+   186
+  ]
+ },
+ "hay0": {
+  "solid_r": 1.0,
+  "kind": "prop",
+  "w": 82,
+  "h": 76,
+  "ax": 23.4,
+  "ay": 21.0,
+  "height": 1.72,
+  "foot": [
+   6,
+   6,
+   41,
+   36
+  ]
+ },
+ "crates0": {
+  "solid_r": 1.3,
+  "kind": "prop",
+  "w": 92,
+  "h": 96,
+  "ax": 21.2,
+  "ay": 25.3,
+  "height": 1.34,
+  "foot": [
+   6,
+   6,
+   59,
+   62
+  ]
+ }
+}
