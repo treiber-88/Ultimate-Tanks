@@ -14,11 +14,29 @@ from ut.ui import UI
 WINDOW = (1600, 900)
 
 
+def window_size():
+    """WINDOW, shrunk in proportion if the desktop is too small to show it with its title bar."""
+    w, h = WINDOW
+    sizes = pygame.display.get_desktop_sizes()
+    if sizes and pygame.display.get_driver() != "dummy":
+        dw, dh = sizes[0]
+        k = min(1.0, (dw - 40) / w, (dh - 140) / h)        # room for the menu bar / taskbar / dock
+        w, h = int(w * k), int(h * k)
+    return w, h
+
+
+def fullscreen_key(e):
+    """F11 anywhere; also Cmd+F on a Mac, where F11 belongs to the system."""
+    if e.type != pygame.KEYDOWN:
+        return False
+    return e.key == pygame.K_F11 or (e.key == pygame.K_f and e.mod & pygame.KMOD_META)
+
+
 class App:
     def __init__(self):
         pygame.init()
         pygame.display.set_caption("Ultimate Tanks")
-        self.screen = pygame.display.set_mode(WINDOW, pygame.RESIZABLE)
+        self.screen = pygame.display.set_mode(window_size(), pygame.RESIZABLE)
         self.clock = pygame.time.Clock()
         self._splash()
         self.sound = Sound()
@@ -54,7 +72,7 @@ class App:
         if self.profile and self.profile.settings["fullscreen"]:
             self.screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         else:
-            self.screen = pygame.display.set_mode(WINDOW, pygame.RESIZABLE)
+            self.screen = pygame.display.set_mode(window_size(), pygame.RESIZABLE)
 
     def switch(self, screen):
         if self.current is not None:
@@ -66,15 +84,17 @@ class App:
         while self.running:
             dt = min(0.05, self.clock.tick(60) / 1000.0)
             events = pygame.event.get()
+            toggles = [e for e in events if fullscreen_key(e)]
+            events = [e for e in events if not fullscreen_key(e)]       # so Cmd+F never types an "f"
+            if toggles and self.profile:
+                self.profile.settings["fullscreen"] = not self.profile.settings["fullscreen"]
+                self.profile.save()
+                self.apply_display()
             for e in events:
                 if e.type == pygame.QUIT:
                     self.running = False
                 elif e.type == pygame.VIDEORESIZE and not (self.screen.get_flags() & pygame.FULLSCREEN):
                     self.screen = pygame.display.set_mode((max(1024, e.w), max(600, e.h)), pygame.RESIZABLE)
-                elif e.type == pygame.KEYDOWN and e.key == pygame.K_F11 and self.profile:
-                    self.profile.settings["fullscreen"] = not self.profile.settings["fullscreen"]
-                    self.profile.save()
-                    self.apply_display()
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_F3:
                     self.show_fps = not self.show_fps
             self.ui.begin(self.screen, events)

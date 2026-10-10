@@ -5,7 +5,7 @@ of ammunition. Every piece of art was modelled and rendered in Blender.
 
 ## Playing
 
-Double-click `run.bat`, or from a terminal:
+On Windows double-click `run.bat`; on a Mac double-click `run.command`. Or from a terminal:
 
 ```
 pip install -r requirements.txt
@@ -13,8 +13,12 @@ python main.py
 ```
 
 Needs 64-bit Python 3.10–3.13 with `pygame-ce` (or classic `pygame` 2.5+), `numpy` and `pillow`.
-`run.bat` installs them the first time. If you see *failed to build pygame*, the Python on that
-computer has no prebuilt pygame: install 64-bit Python 3.12 and run `run.bat` again.
+`run.bat` and `run.command` install them the first time. If you see *failed to build pygame*, the Python on
+that computer has no prebuilt pygame: install 64-bit Python 3.12 and run the launcher again.
+
+On a Mac, `run.command` keeps the libraries in a `.venv` folder next to the game, so nothing else on the
+computer is changed. If macOS refuses to open it the first time ("cannot be opened because it is from an
+unidentified developer"), right-click it and choose *Open*.
 
 ### Controls
 
@@ -23,13 +27,13 @@ computer has no prebuilt pygame: install 64-bit Python 3.12 and run `run.bat` ag
 | Drive / steer | `W` `S` / `A` `D` (or arrow keys) |
 | Aim turret | Mouse |
 | Fire cannon (shells) | Left mouse button |
-| Fire machine gun (automatic weapons) | Right mouse button or `Space` |
+| Fire machine gun (automatic weapons) | Right mouse button (two-finger click on a trackpad) or `Space` |
 | Next shell type / next automatic weapon | `Q` or mouse wheel / `E` |
 | Pick a weapon directly | `1`–`9`, `0` (in the order of the ammunition list) |
 | Shop and tank swap, mid-battle | `B` |
 | Scoreboard | hold `Tab` |
 | Pause / menu | `Esc` |
-| Fullscreen | `F11` |
+| Fullscreen | `F11`, or `Cmd`+`F` on a Mac |
 | FPS counter | `F3` |
 
 ### How a battle works
@@ -66,6 +70,9 @@ progress.
 - Same Wi-Fi or LAN: the host's game appears in the *Join Multiplayer* list by itself; press Join. If it does
   not appear, type the address shown in the host's lobby. The host must allow Python through Windows
   Firewall on private networks (Windows asks the first time a lobby is opened - choose Allow).
+- Hosting on a Mac: if the macOS firewall is on, it asks *"Do you want the application Python to accept
+  incoming network connections?"* the first time a lobby is opened - choose Allow. To change the answer
+  later: System Settings → Network → Firewall → Options. Windows PCs and Macs can play together.
 - "Actively refused" means nothing was listening at that address: the host had not opened the lobby,
   or the address was wrong (`127.0.0.1` always means *your own* PC). No answer at all usually means
   the host's firewall is blocking the game.

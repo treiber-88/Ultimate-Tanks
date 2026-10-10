@@ -168,7 +168,7 @@ class Assets:
         k = (px, bold)
         if k not in self._fonts:
             f = None
-            for name in ("bahnschrift", "segoeui", "arial"):
+            for name in ("bahnschrift", "dinalternate", "segoeui", "arial"):     # dinalternate: macOS
                 path = pygame.font.match_font(name, bold=bold)
                 if path:
                     f = pygame.font.Font(path, px)
