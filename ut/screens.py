@@ -442,6 +442,8 @@ class Lobby(Screen):
         self.allies, self.enemies = allies, enemies
         self.joined = {}                 # cid -> [loadout, team]
         self.ips = net.local_addresses()
+        maps = {m["key"]: m["name"] for m in data.MAPS}
+        server.info.update(name=app.profile.name, map=maps.get(settings["map"], ""), players=1)
         self.started = False
 
     def frame(self, dt):
@@ -461,14 +463,17 @@ class Lobby(Screen):
                 self.joined.pop(cid, None)
                 self.server.drop(cid)
             self._send_lobby()
+            self.server.info["players"] = 1 + len(self.joined)
         draw_backdrop(app, 150)
         x = ui.vw / 2 - 560
         ui.panel(x, 90, 1120, 900)
         ui.text("LOBBY", ui.vw / 2, 122, 46, WHITE, "c")
-        ui.text("Friends join with:  %s   port %d" % ("  or  ".join(self.ips[:3]), self.server.port), ui.vw / 2, 190,
-                28, GOLD, "c")
-        ui.text("Same Wi-Fi/LAN works as-is. Over the internet, forward this TCP port on your router.", ui.vw / 2,
-                232, 22, DIM, "c", bold=False)
+        ui.text("Friends on your network will see this game in 'Join Multiplayer'.", ui.vw / 2, 178, 24, WHITE,
+                "c", bold=False)
+        ui.text("Or they can type:  %s   port %d" % ("  or  ".join(self.ips[:3]), self.server.port), ui.vw / 2,
+                210, 26, GOLD, "c")
+        ui.text("If nobody can join, this PC's firewall or security suite (Norton, McAfee...) is blocking Python: "
+                "allow it, or let the other PC host.", ui.vw / 2, 248, 20, DIM, "c", bold=False)
         for team in (0, 1):
             tx = x + 60 + team * 520
             ui.text(data.TEAM_NAMES[team], tx, 290, 32, data.TEAM_UI[team])
@@ -515,40 +520,67 @@ class Lobby(Screen):
 class Join(Screen):
     def __init__(self, app):
         super().__init__(app)
-        self.host = app.profile.last_host
+        self.host = app.profile.last_host if app.profile.last_host != "127.0.0.1" else ""
         self.port = str(data.DEFAULT_PORT)
         self.conn = None
         self.inbox = None
         self.status = None
         self.lobby = None
         self.handed_over = False
+        self.finder = net.Finder()
+
+    def connect(self, host, port):
+        app = self.app
+        try:
+            port = int(port or data.DEFAULT_PORT)
+            self.conn, self.inbox = net.connect(host, port)
+            self.conn.send({"t": "join", "lo": app.profile.loadout()})
+            app.profile.last_host = host
+            app.profile.save()
+            self.status = None
+        except (OSError, ValueError, OverflowError) as ex:
+            self.conn = None
+            self.status = net.explain(ex, host, port)
 
     def frame(self, dt):
         app, ui = self.app, self.ui
         draw_backdrop(app, 150)
-        x = ui.vw / 2 - 480
-        ui.panel(x, 200, 960, 680)
-        ui.text("JOIN A BATTLE", ui.vw / 2, 232, 46, WHITE, "c")
+        x = ui.vw / 2 - 520
+        ui.panel(x, 110, 1040, 860)
+        ui.text("JOIN A BATTLE", ui.vw / 2, 140, 46, WHITE, "c")
         if self.conn is None:
-            ui.text("Host address", x + 60, 340, 26, DIM)
-            self.host = ui.text_input("host", x + 60, 380, 560, 64, self.host, 40)
-            ui.text("Port", x + 650, 340, 26, DIM)
-            self.port = ui.text_input("jport", x + 650, 380, 250, 64, self.port, 5, DIGITS)
-            ui.wrap("Ask the host for the address shown in their lobby. On the same PC use 127.0.0.1.", x + 60, 470,
-                    840, 24)
+            games = self.finder.poll()
+            ui.text("Games on your network", x + 60, 226, 26, DIM)
+            y = 270
+            for ip, port, info in games[:4]:
+                ui.slot(x + 60, y, 920, 70)
+                ui.text(str(info.get("name", "?"))[:16] + "'s game", x + 84, y + 8, 28)
+                n = info.get("players", 1)
+                ui.text("%s    %s player%s    %s" % (info.get("map", ""), n, "" if n == 1 else "s", ip), x + 84,
+                        y + 42, 20, DIM, bold=False)
+                if ui.button("Join", x + 790, y + 7, 180, 56, color=GREEN):
+                    self.connect(ip, port)
+                    return
+                y += 78
+            if not games:
+                dots = "." * (1 + int(pygame.time.get_ticks() / 500) % 3)
+                ui.text("Searching" + dots, x + 84, 284, 26, WHITE, bold=False)
+                ui.text("The host must be on their lobby screen, on the same Wi-Fi or LAN as you.", x + 84, 322, 22,
+                        DIM, bold=False)
+                ui.text("Nothing showing? Security software on the host's PC may be blocking it - try hosting from",
+                        x + 84, 354, 22, DIM, bold=False)
+                ui.text("this PC instead, or type the address below.", x + 84, 382, 22, DIM, bold=False)
+            ui.text("Or type the host's address (shown in their lobby)", x + 60, 606, 26, DIM)
+            self.host = ui.text_input("host", x + 60, 646, 560, 64, self.host, 40)
+            self.port = ui.text_input("jport", x + 640, 646, 160, 64, self.port, 5, DIGITS)
+            typed = self.host.strip()
+            if ui.button("Connect", x + 820, 646, 160, 64, bool(typed), color=GREEN) or \
+                    (typed and ui.focus in ("host", "jport") and ui.key(pygame.K_RETURN)):
+                self.connect(typed, self.port)
+                if self.conn:
+                    return
             if self.status:
-                ui.text(self.status, ui.vw / 2, 600, 26, RED, "c")
-            if ui.button("Connect", x + 600, 780, 300, 70, bool(self.host.strip()), color=GREEN) or \
-                    (ui.key(pygame.K_RETURN) and self.host.strip()):
-                try:
-                    self.conn, self.inbox = net.connect(self.host.strip(), int(self.port or data.DEFAULT_PORT))
-                    self.conn.send({"t": "join", "lo": app.profile.loadout()})
-                    app.profile.last_host = self.host.strip()
-                    app.profile.save()
-                    self.status = None
-                except (OSError, ValueError, OverflowError) as ex:
-                    self.conn = None
-                    self.status = "Could not connect: %s" % ex
+                ui.wrap(self.status, x + 60, 730, 920, 24, ORANGE)
         else:
             while not self.inbox.empty():
                 _cid, msg = self.inbox.get()
@@ -566,17 +598,18 @@ class Join(Screen):
                     self.conn.close()
                     self.conn = None
                     return
-            ui.text("Connected. Waiting for the host to start...", ui.vw / 2, 340, 30, GREEN, "c")
+            ui.text("Connected. Waiting for the host to start...", ui.vw / 2, 260, 30, GREEN, "c")
             if self.lobby:
-                y = 410
-                for name, team in self.lobby["players"][:10]:
+                y = 330
+                for name, team in self.lobby["players"][:12]:
                     ui.text(name, ui.vw / 2 - 20, y, 28, WHITE, "r")
                     ui.text(data.TEAM_NAMES[team], ui.vw / 2 + 20, y, 28, data.TEAM_UI[team])
                     y += 40
-        if ui.button("Back", x + 60, 780, 300, 70) or ui.key(pygame.K_ESCAPE):
+        if ui.button("Back", x + 60, 870, 300, 70) or ui.key(pygame.K_ESCAPE):
             app.switch(Menu(app))
 
     def close(self):
+        self.finder.close()
         if self.conn and not self.handed_over:
             self.conn.close()
 

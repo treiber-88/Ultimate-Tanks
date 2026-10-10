@@ -15,6 +15,7 @@ from .data import TANKS, TANK_INDEX, WEAPON_INDEX
 from .world import World, angle_diff
 
 SNAP_RATE = 20.0
+DISCOVER, FOUND = b"UTANKS?", b"UTANKS!"
 INPUT_RATE = 30.0
 MAX_HUMANS = 16
 
@@ -85,7 +86,30 @@ class Server:
         self.sock.listen(8)
         self.port = port
         self.open = True
+        self.info = dict(name="?", map="", players=1)       # shown to people browsing for games
         threading.Thread(target=self._accept, daemon=True).start()
+        self.udp = None
+        try:
+            self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.udp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.udp.bind(("", data.DISCOVERY_PORT))
+            threading.Thread(target=self._answer, daemon=True).start()
+        except OSError:
+            self.udp = None                                  # discovery is a convenience; hosting still works
+
+    def _answer(self):
+        """Reply to "who is hosting?" broadcasts from Join screens on the local network."""
+        while self.open:
+            try:
+                msg, addr = self.udp.recvfrom(256)
+            except OSError:
+                break
+            if msg.startswith(DISCOVER):
+                reply = dict(self.info, port=self.port)
+                try:
+                    self.udp.sendto(FOUND + json.dumps(reply, separators=(",", ":")).encode("utf-8"), addr)
+                except OSError:
+                    pass
 
     def _accept(self):
         while self.open:
@@ -117,13 +141,94 @@ class Server:
 
     def close(self):
         self.open = False
-        try:
-            self.sock.close()
-        except OSError:
-            pass
+        for s in (self.sock, self.udp):
+            try:
+                if s:
+                    s.close()
+            except OSError:
+                pass
         for c in list(self.conns.values()):
             c.close()
         self.conns.clear()
+
+
+class Finder:
+    """Looks for games on the local network: broadcasts a question, hosts answer. Used by the Join screen."""
+
+    def __init__(self):
+        self.games = {}          # (ip, port) -> (info, last heard)
+        self.last = 0.0
+        self.sock = None
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.sock.bind(("", 0))
+            self.sock.setblocking(False)
+        except OSError:
+            self.sock = None
+
+    def poll(self):
+        """Call every frame. Returns [(ip, port, info)] for games heard from in the last few seconds."""
+        now = time.time()
+        if self.sock:
+            if now - self.last > 1.0:
+                self.last = now
+                targets = {"255.255.255.255", "127.0.0.1"}
+                for ip in local_addresses():                 # also each adapter's own subnet broadcast
+                    targets.add(ip.rsplit(".", 1)[0] + ".255")
+                for t in targets:
+                    try:
+                        self.sock.sendto(DISCOVER, (t, data.DISCOVERY_PORT))
+                    except OSError:
+                        pass
+            while True:
+                try:
+                    msg, addr = self.sock.recvfrom(1024)
+                except OSError:
+                    break
+                if msg.startswith(FOUND):
+                    try:
+                        info = json.loads(msg[len(FOUND):].decode("utf-8"))
+                        port = int(info["port"])
+                    except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+                        continue
+                    self.games[(addr[0], port)] = (info, now)
+        self.games = {k: v for k, v in self.games.items() if now - v[1] < 3.5}
+        own = set(local_addresses())
+        out = {}
+        for (ip, port), (info, _t) in self.games.items():
+            # a host on this same PC answers on several addresses: show it once
+            key = ("local", port) if (ip in own or ip.startswith("127.")) else (ip, port)
+            if key not in out or ip.startswith("127."):
+                out[key] = (ip, port, info)
+        return sorted(out.values())
+
+    def close(self):
+        if self.sock:
+            self.sock.close()
+            self.sock = None
+
+
+def explain(ex, host, port):
+    """Turn a socket error into something a player can act on."""
+    text = str(ex).lower()
+    where = "%s port %s" % (host, port)
+    if isinstance(ex, ConnectionRefusedError) or "refused" in text:
+        if host.startswith("127.") or host == "localhost":
+            return ("Nothing is hosting on this computer. 127.0.0.1 means 'this PC' - to join a friend, "
+                    "use the address shown in their lobby.")
+        return ("%s refused the connection. Either the host has not clicked 'Open lobby' yet, or security "
+                "software on the host's PC (Norton, McAfee, ...) is blocking Python - allow it there, or let the "
+                "other PC host instead." % where)
+    if isinstance(ex, socket.timeout) or "timed out" in text:
+        return ("No answer from %s. The host's firewall or security software is probably blocking the game "
+                "(allow Python there), or you are on different networks and the host has not forwarded the port."
+                % where)
+    if isinstance(ex, socket.gaierror):
+        return "'%s' is not a valid address. It should look like 192.168.1.23." % host
+    if "unreachable" in text:
+        return "Cannot reach %s. Are both computers on the same network?" % where
+    return "Could not connect to %s: %s" % (where, ex)
 
 
 def connect(host, port, timeout=5.0):
@@ -270,6 +375,7 @@ class LocalSession:
 
     def _broadcast(self):
         w = self.world
+        self.server.info["players"] = sum(1 for t in w.players.values() if not t.is_ai)
         snap = w.snapshot()
         snap["t"] = "snap"
         snap["ev"] = self._outbox

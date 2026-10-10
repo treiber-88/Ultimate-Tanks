@@ -63,8 +63,17 @@ One player chooses *Host Multiplayer*, sets up the battle and opens the lobby. T
 port to give to friends, who choose *Join Multiplayer* and type it in. Players can also join a battle already in
 progress.
 
-- Same Wi-Fi or LAN: works as-is (allow Python through the Windows firewall when asked).
-- Over the internet: the host must forward the TCP port (default 27877) on their router.
+- Same Wi-Fi or LAN: the host's game appears in the *Join Multiplayer* list by itself; press Join. If it does
+  not appear, type the address shown in the host's lobby. The host must allow Python through Windows
+  Firewall on private networks (Windows asks the first time a lobby is opened - choose Allow).
+- "Actively refused" means nothing was listening at that address: the host had not opened the lobby,
+  or the address was wrong (`127.0.0.1` always means *your own* PC). No answer at all usually means
+  the host's firewall is blocking the game.
+- Security suites with their own firewall (Norton, McAfee, Bitdefender...) block incoming connections to
+  Python even when Windows Firewall allows them, and typically show up as "actively refused". On the
+  host's PC, allow `python.exe` in the suite's firewall/program rules (TCP 27877 for the game, UDP 27878
+  for the game list) - or simply host from the PC that does not have the suite; joining is not affected.
+- Over the internet: the host must forward TCP port 27877 on their router.
 - Up to 16 humans; AI tanks fill each team as configured by the host (0–20 per side).
 - Each player brings their own commander. Credits earned and things bought during the battle are saved back to it.
 

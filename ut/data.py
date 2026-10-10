@@ -14,6 +14,7 @@ FIRE_ARC = 0.1              # a player's gun only fires once the turret is withi
 SPAWN_SHIELD = 2.5
 WIN_BONUS, LOSS_BONUS = 30, 10
 DEFAULT_PORT = 27877
+DISCOVERY_PORT = 27878       # UDP: how the Join screen finds games on the local network
 
 SHELL, AUTO = 0, 1          # weapon slots: left mouse fires the cannon, right mouse the machine gun
 

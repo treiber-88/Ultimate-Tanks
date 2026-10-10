@@ -123,9 +123,15 @@ time.sleep(0.3)
 frames(3)
 shot("12_lobby")
 c.close()
+lobby = app.current
+lobby.started = True                    # keep the server alive while we look at the Join screen
 app.switch(screens.Join(app))
-frames(2)
+for _ in range(25):
+    frames(1)
+    time.sleep(0.05)
 shot("13_join")
+print("games listed on the Join screen:", [(g[2].get("name"), g[2].get("map"), g[2].get("players")) for g in app.current.finder.poll()])
+srv.close()
 app.switch(screens.ProfileSelect(app))
 frames(2)
 shot("11_profiles")
