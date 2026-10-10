@@ -8,7 +8,8 @@ import math
 import os
 import sys
 
-HERE = r"C:\Users\mk-ki\Desktop\Ultimate Tanks\tools\blender"
+# tools/blrun.py passes UT_HERE; when run as a file (blender -b --python ...) __file__ is used instead
+HERE = globals().get("UT_HERE") or os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import utlib as L

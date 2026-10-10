@@ -12,7 +12,9 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Needs Python 3.10+ with `pygame`, `numpy` and `pillow`.
+Needs 64-bit Python 3.10–3.13 with `pygame-ce` (or classic `pygame` 2.5+), `numpy` and `pillow`.
+`run.bat` installs them the first time. If you see *failed to build pygame*, the Python on that
+computer has no prebuilt pygame: install 64-bit Python 3.12 and run `run.bat` again.
 
 ### Controls
 

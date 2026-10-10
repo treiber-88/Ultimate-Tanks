@@ -13,7 +13,7 @@ from mathutils import Matrix, Vector
 
 SCENE = "UT"
 PPM = 20.0  # pixels per metre in the game
-ASSETS = r"C:\Users\mk-ki\Desktop\Ultimate Tanks\assets"
+ASSETS = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets")
 
 
 # ---------------------------------------------------------------------------
