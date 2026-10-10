@@ -35,6 +35,7 @@ class Brain:
         self.escape_turn = 1.0
         self.last = (0.0, 0.0)
         self.scout = rng.random() < 0.18          # this driver likes the Speed Tank
+        self.defender = rng.random() < 0.25       # Capture the Flag: stays home to guard the flag
         self.greed = rng.uniform(0.0, 1.0)        # saves up for big purchases instead of buying early
 
 
@@ -44,6 +45,7 @@ class AIController:
         self.rng = random.Random(world.settings["seed"] * 13 + 5)
         self.fields = [None, None]
         self.field_time = [0.0, 0.3]
+        self.goal_fields = {}           # Capture the Flag: name -> [nav cell, time computed, flow field]
 
     def attach(self, tank):
         tank.brain = Brain(self.rng)
@@ -144,17 +146,20 @@ class AIController:
         b = t.brain
         w = self.world
         m = w.map
+        ctf = bool(w.flags)
         enemies = [e for e in alive if e.team != t.team]
-        if not enemies:
+        if not enemies and not ctf:
             b.target, b.heading, b.throttle = -1, None, 0.0
             return
         enemies.sort(key=lambda e: (e.x - t.x) ** 2 + (e.y - t.y) ** 2)
-        target, los = enemies[0], False
+        if ctf:                                  # whoever has our flag is the priority target
+            enemies.sort(key=lambda e: e.flag != t.team)
+        target, los = (enemies[0], False) if enemies else (None, False)
         for e in enemies[:3]:
             if m.line_of_fire(t.x, t.y, e.x, e.y):
                 target, los = e, True
                 break
-        b.target, b.los = target.pid, los
+        b.target, b.los = (target.pid if target else -1), los
         if not los and t.credits >= 20 and self.rng.random() < 0.02:
             before = t.tank_key
             self.shop(t)                    # out of contact: a chance to spend winnings mid-life
@@ -162,7 +167,7 @@ class AIController:
                 key = t.tank_key
                 t.set_tank(before)
                 w.select_tank(t.pid, key)
-        dist = math.hypot(target.x - t.x, target.y - t.y)
+        dist = math.hypot(target.x - t.x, target.y - t.y) if target else 1e9
         b.dist = dist
 
         # preferred stand-off distance depends on what we are carrying
@@ -171,21 +176,66 @@ class AIController:
         want = min(reach * 0.62, 620) * b.range_bias
         if s0 >= 0 and WEAPONS[s0]["hurts_all"]:
             want = max(want, WEAPONS[s0]["splash"] + 220)
-        to_target = math.atan2(target.y - t.y, target.x - t.x)
+        to_target = math.atan2(target.y - t.y, target.x - t.x) if target else t.angle
 
-        if los and dist < want * 0.55:
+        goal = self._ctf_goal(t) if ctf else None
+        if goal:
+            key, pos, rush = goal
+            dgoal = math.hypot(pos[0] - t.x, pos[1] - t.y)
+            # tanks on a mission keep driving and shoot on the move; only guards, escorts and hunters
+            # stop to duel. (Stopping for every fight turns the match into a brawl nobody scores in.)
+            may_fight = t.flag < 0 and not rush
+        else:
+            may_fight = True
+
+        if may_fight and los and dist < want * 0.55:
             b.heading, b.throttle = to_target, -0.8               # too close: back away, still facing them
-        elif los and dist < want * 1.15:
+        elif may_fight and los and dist < want * 1.15:
             b.heading = to_target + b.orbit * 1.35                # circle to be a harder target
             b.throttle = 0.75
             if self.rng.random() < 0.04:
                 b.orbit = -b.orbit
+        elif goal:
+            if not rush and key.startswith("home") and dgoal < 300:
+                b.heading, b.throttle = (to_target if los else None), 0.0     # on guard at the base
+            elif dgoal < 130:
+                b.heading, b.throttle = math.atan2(pos[1] - t.y, pos[0] - t.x), 1.0
+            else:
+                b.heading = self._path_heading(t, math.atan2(pos[1] - t.y, pos[0] - t.x), self._field_to(key, pos))
+                b.throttle = 1.0
         else:
             b.heading = self._path_heading(t, to_target)
             b.throttle = 1.0
 
-    def _path_heading(self, t, fallback):
-        field = self.fields[t.team]
+    def _field_to(self, key, pos):
+        """Flow field leading to a point (a flag or a base), recomputed when the point moves."""
+        cell = (int(pos[0]) // NAV, int(pos[1]) // NAV)
+        now = self.world.time
+        g = self.goal_fields.get(key)
+        if g is None or (g[0] != cell and now - g[1] > 0.4):
+            g = [cell, now, self.world.map.flow_field([cell])]
+            self.goal_fields[key] = g
+        return g[2]
+
+    def _ctf_goal(self, t):
+        """Where this tank should be heading, and whether it should ignore fights on the way: (key, pos, rush)."""
+        w = self.world
+        mine, theirs = w.flags[t.team], w.flags[1 - t.team]
+        home = w.map.flag_homes[t.team]
+        if t.flag >= 0:
+            return "home%d" % t.team, home, True                         # run it home
+        if mine[0] == 1 and (t.brain.defender or math.hypot(mine[1] - t.x, mine[2] - t.y) < 900):
+            return "flag%d" % t.team, (mine[1], mine[2]), False          # hunt the thief
+        if t.brain.defender:
+            if mine[0] == 2:
+                return "flag%d" % t.team, (mine[1], mine[2]), True       # touch it to send it home
+            return "home%d" % t.team, home, False                        # stand guard
+        if theirs[0] == 1:
+            return "flag%d" % (1 - t.team), (theirs[1], theirs[2]), False    # escort our carrier
+        return "flag%d" % (1 - t.team), (theirs[1], theirs[2]), True     # go and get it
+
+    def _path_heading(self, t, fallback, field=None):
+        field = field or self.fields[t.team]
         if field is None:
             return fallback
         cx, cy = int(t.x) // NAV, int(t.y) // NAV
@@ -254,11 +304,12 @@ class AIController:
         t.set_tank(best)
 
 
-def make_ai_loadout(rng, team, index, skill, used_names):
+def make_ai_loadout(rng, team, index, skill, used_names, tank="basic"):
     names = [n for n in data.AI_NAMES if n not in used_names] or data.AI_NAMES
     name = rng.choice(names)
     used_names.add(name)
     colors = data.AI_COLORS[team]
     credits = (0, rng.choice((0, 0, 20, 40)), rng.choice((40, 60, 100, 140)))[skill]
-    return dict(name=name, color=list(colors[index % len(colors)]), credits=credits, tanks=["basic"],
-                weapons=["basic_shell", "tracer"], tank="basic")
+    tanks = ["basic"] if tank == "basic" else ["basic", tank]
+    return dict(name=name, color=list(colors[index % len(colors)]), credits=credits, tanks=tanks,
+                weapons=["basic_shell", "tracer"] + data.AI_KIT.get(tank, []), tank=tank)

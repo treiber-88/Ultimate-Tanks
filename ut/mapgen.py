@@ -439,6 +439,30 @@ class GameMap:
                     (i, o["x"], o["y"], o["kind"] == "tree"))
         self.nav_dirty = False
         self.shallow = (self.water == 2).astype(np.uint8).tobytes()
+        # Capture the Flag: each team's flag stands on open ground a little in front of its spawn zone -
+        # close enough to defend, far enough that respawning tanks do not appear on top of it
+        self.flag_homes = []
+        trees = [(o["x"], o["y"]) for o in self.objects if o["kind"] == "tree"]
+        for i, (x0, y0, x1, y1) in enumerate(self.zones):
+            fy = (y0 + y1) / 2
+            best = None
+            for ahead in (520, 440, 600, 360, 680, 280):
+                fx = x1 + ahead if i == 0 else x0 - ahead
+                for dy in (0, -160, 160, -320, 320, -480, 480):
+                    cx, cy = int(fx) // NAV, int(fy + dy) // NAV
+                    px, py = cx * NAV + NAV / 2, cy * NAV + NAV / 2
+                    if self.nav[cy, cx] or self.blocked_circle(px, py, 90) or self.shallow_at(px, py):
+                        continue
+                    if any(abs(tx - px) < 170 and abs(ty - py) < 170 for tx, ty in trees):
+                        continue                   # keep it out from under tree canopies
+                    best = (px, py)
+                    break
+                if best:
+                    break
+            if best is None:
+                c = self._free_cell(x1 + 300 if i == 0 else x0 - 300, fy)
+                best = (c[0] * NAV + NAV / 2, c[1] * NAV + NAV / 2) if c else ((x0 + x1) / 2, fy)
+            self.flag_homes.append(best)
         self.spawns = []
         for x0, y0, x1, y1 in self.zones:
             pts = []

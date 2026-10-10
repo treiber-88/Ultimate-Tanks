@@ -546,6 +546,8 @@ class RemoteSession:
         # things that are not interpolated are taken from the newest snapshot straight away
         w.time, w.scores, w.over = msg["time"], msg["sc"], msg["over"]
         w.zones = [z + [0, -1, -1] for z in msg["zn"]]
+        if msg.get("fl"):
+            w.apply_flags(msg["fl"])
         me = w.players.get(self.pid)
         if me and "me" in msg:
             me.credits, me.tanks, me.weapons, me.earned = msg["me"]
@@ -563,6 +565,8 @@ class RemoteSession:
             t.hp, t.shield, t.respawn = row[6], (1.0 if row[8] else 0.0), row[11]
             t.sel = [row[9], row[10]]
             t.kills, t.deaths = row[12], row[13]
+            if len(row) > 15:
+                t.out, t.respawns = row[15] < 0, max(0, row[15])
             if t.pid == self.pid:
                 self._reconcile(t, row, msg.get("ack", 0.0))
 

@@ -142,6 +142,7 @@ class BattleView:
         self.rng = random.Random(3)
         self.cam = [0.0, 0.0]
         self.focus = None
+        self.follow = None          # pid to watch once our own tank is out of the match
         self.shake = 0.0
         self.flash = 0.0
         self.particles = []
@@ -346,6 +347,30 @@ class BattleView:
                 _, pid, x, y = e
                 self.puff("ring", x, y, 0, 0, 0.6, 40, 220, 200, True, (120, 190, 255))
                 self.track_pos.pop(pid, None)
+            elif kind == "out":
+                who = w.players.get(e[1])
+                if who and e[1] != self.local:
+                    self.feed.append((self.time, None, -1, who.name + " is out", who.team, None))
+            elif kind == "flag":
+                _, what, team, pid = e
+                me = w.players.get(self.local)
+                who = w.players.get(pid)
+                name = who.name if who else ""
+                ours = me is not None and me.team == team          # it is OUR flag this happened to
+                flag = "your flag" if ours else "the enemy flag"
+                if what == "taken":
+                    text, good = "%s has taken %s!" % (name, flag), not ours
+                elif what == "dropped":
+                    text, good = "%s dropped %s" % (name, flag), ours
+                elif what == "returned":
+                    text, good = ("%s returned %s" % (name, flag)) if name else (flag.capitalize() + " returned"), ours
+                else:
+                    text, good = "%s captured %s!" % (name, flag), not ours
+                    f = w.flags[team] if team < len(w.flags) else None
+                    hx, hy = self.map.flag_homes[1 - team]
+                    self.puff("ring", hx, hy, 0, 0, 0.8, 60, 520, 255, True, data.TEAM_UI[1 - team])
+                self.banner = (self.time, text, (120, 220, 110) if good else (255, 110, 90))
+                self.snd.play("buy" if good else "deny", 0.8)
             elif kind == "crush":
                 o = self.map.objects[e[1]]
                 self.snd.play_at("hit", o["x"], o["y"], ear, 0.5 if o["kind"] == "tree" else 0.2, 0.05, reach=900)
@@ -375,8 +400,11 @@ class BattleView:
         self.time += dt
         sw, sh = screen_size
         t = self.world.players.get(self.local)
+        watched = self.world.players.get(self.follow) if self.follow is not None else None
         if t and t.alive:
             self.focus = (t.x, t.y)
+        elif watched and watched.alive:
+            self.focus = (watched.x, watched.y)
         fx, fy = self.focus or (self.map.w / 2, self.map.h / 2)
         tx = fx - sw / 2 + (mouse[0] - sw / 2) * 0.28
         ty = fy - sh / 2 + (mouse[1] - sh / 2) * 0.28
@@ -496,6 +524,12 @@ class BattleView:
 
         for o in visible(LAYER_GROUND):
             blit(o[0], (o[1] - cx, o[2] - cy))
+        flags = self.world.flags
+        for team in range(len(flags)):               # Capture the Flag: the pads the flags stand on
+            hx, hy = self.map.flag_homes[team]
+            if cx - 80 < hx < cx + sw + 80 and cy - 80 < hy < cy + sh + 80:
+                m = a.ctf_meta["base_%d" % team]
+                blit(a.ctf["base_%d" % team], (hx - cx - m["ax"], hy - cy - m["ay"]))
 
         # wrecks (tread marks, scorches and craters are already painted into the ground)
         for key, x, y, ang, _t in self.wrecks:
@@ -550,6 +584,20 @@ class BattleView:
             s = self._muzzle(ang, scale)
             blit(s, (fx_ - cx + math.cos(ang) * 30 * scale - s.get_width() // 2,
                      fy_ - cy + math.sin(ang) * 30 * scale - s.get_height() // 2), special_flags=ADD)
+
+        for team, f in enumerate(flags):             # flags stand above tanks, and ride on their carrier
+            fx_, fy_ = f[1], f[2]
+            if f[0] == 1:
+                c = self.world.players.get(f[3])
+                if c:
+                    fx_, fy_ = c.x, c.y
+            if cx - 200 < fx_ < cx + sw + 200 and cy - 200 < fy_ < cy + sh + 200:
+                if f[0] == 2:                        # dropped: a pulsing ring so it is easy to spot
+                    lvl = 120 + int(80 * math.sin(self.time * 6))
+                    g = self.fx_sprite("ring", 150, data.TEAM_UI[team], True, lvl)
+                    blit(g, (fx_ - cx - g.get_width() // 2, fy_ - cy - g.get_height() // 2), special_flags=ADD)
+                m = a.ctf_meta["flag_%d" % team]
+                blit(a.ctf["flag_%d" % team], (fx_ - cx - m["ax"], fy_ - cy - m["ay"]))
 
         # scenery above tanks
         for o in visible(LAYER_SOLID):

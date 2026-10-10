@@ -362,9 +362,13 @@ def build_world(app, settings, allies, enemies, humans=()):
     rng = random.Random(settings["seed"] * 101 + 3)
     used = {t.name for t in w.players.values()}
     skill = settings["difficulty"]
+    # the AI's tanks keep pace with the best garage among the human players
+    tier = max([data.player_tier(app.profile.tanks)] + [data.player_tier(lo.get("tanks", ())) for lo, _ in humans])
     for team, count in ((0, allies), (1, enemies)):
+        lineup = data.ai_lineup(tier, count)
+        rng.shuffle(lineup)
         for i in range(count):
-            t = w.add_player(make_ai_loadout(rng, team, i, skill, used), team, True, skill)
+            t = w.add_player(make_ai_loadout(rng, team, i, skill, used, lineup[i]), team, True, skill)
             w.ai.attach(t)
     return w, pids
 
@@ -373,7 +377,8 @@ class Setup(Screen):
     def __init__(self, app, host):
         super().__init__(app)
         self.host = host
-        d = dict(map=0, allies=4, enemies=5, difficulty=1, kills=30, minutes=10, port=str(data.DEFAULT_PORT))
+        d = dict(map=0, allies=4, enemies=5, difficulty=1, kills=30, minutes=10, port=str(data.DEFAULT_PORT),
+                 mode=0, caps=3)
         d.update(app.profile.last_setup or {})
         self.d = d
         self.seed = random.randrange(1, 99999)
@@ -385,28 +390,42 @@ class Setup(Screen):
         x = ui.vw / 2 - 520
         ui.panel(x, 90, 1040, 900)
         ui.text("HOST A BATTLE" if self.host else "SINGLE PLAYER BATTLE", ui.vw / 2, 122, 46, WHITE, "c")
-        y, w = 220, 940
+        y, w, row = 196, 940, 68
+        d["mode"] = ui.choice("Game type", x + 50, y, w, [m[1] for m in data.MODES], d["mode"] % len(data.MODES))
+        ctf = data.MODES[d["mode"]][0] == "ctf"
+        y += row
         d["map"] = ui.choice("Battlefield", x + 50, y, w, [m["name"] for m in data.MAPS], d["map"])
-        ui.text(data.MAPS[d["map"]]["desc"], x + 50, y + 60, 22, DIM, bold=False)
-        y += 104
+        ui.text("Steal the enemy flag and bring it to your own. Your flag must be at home to score." if ctf
+                else data.MAPS[d["map"]]["desc"], x + 50, y + 58, 22, DIM, bold=False)
+        y += row + 30
         self.seed = ui.stepper("Terrain seed", x + 50, y, w, self.seed, 1, 99999)
-        y += 74
+        y += row
         d["allies"] = ui.stepper("AI tanks on your team", x + 50, y, w, d["allies"], 0, 20)
-        y += 74
+        y += row
         d["enemies"] = ui.stepper("AI tanks on the enemy team", x + 50, y, w, d["enemies"], 0 if self.host else 1, 20)
-        y += 74
+        y += row
         d["difficulty"] = ui.choice("AI difficulty", x + 50, y, w, data.DIFFICULTIES, d["difficulty"])
-        y += 74
-        d["kills"] = ui.stepper("Kills to win", x + 50, y, w, d["kills"], 5, 150, 5)
-        y += 74
+        y += row
+        if ctf:
+            d["caps"] = ui.stepper("Captures to win", x + 50, y, w, d["caps"], 1, 10)
+        else:
+            d["kills"] = ui.stepper("Kills to win", x + 50, y, w, d["kills"], 5, 150, 5)
+        y += row
         d["minutes"] = ui.stepper("Time limit", x + 50, y, w, d["minutes"], 0, 60, 1,
                                   lambda v: "none" if v == 0 else "%d min" % v)
-        y += 74
+        y += row
         if self.host:
             ui.text("Port", x + 50, y + 12, 26, DIM)
             d["port"] = ui.text_input("port", x + 50 + w - 300, y, 300, 54, d["port"], 5, DIGITS)
+        # what the AI will bring, given the best tank in your garage
+        lineup = data.ai_lineup(data.player_tier(app.profile.tanks), d["enemies"])
+        if lineup:
+            names = {t["key"]: t["name"].replace(" Tank", "") for t in TANKS}
+            parts = ["%d %s" % (lineup.count(k), names[k]) for k in dict.fromkeys(lineup)]
+            ui.text("Enemy AI tanks (they keep pace with your garage):  " + ",  ".join(parts), ui.vw / 2, 832, 20,
+                    DIM, "c", bold=False)
         if self.error:
-            ui.text(self.error, ui.vw / 2, 846, 24, RED, "c")
+            ui.text(self.error, ui.vw / 2, 858, 22, RED, "c")
         if ui.button("Back", x + 50, 890, 300, 70) or ui.key(pygame.K_ESCAPE):
             app.switch(Menu(app))
             return
@@ -414,7 +433,8 @@ class Setup(Screen):
             app.profile.last_setup = dict(d)
             app.profile.save()
             settings = dict(map=data.MAPS[d["map"]]["key"], seed=self.seed, kill_limit=d["kills"],
-                            time_limit=d["minutes"] * 60, difficulty=d["difficulty"])
+                            time_limit=d["minutes"] * 60, difficulty=d["difficulty"],
+                            mode=data.MODES[d["mode"]][0], cap_limit=d["caps"])
             if self.host:
                 try:
                     port = int(d["port"] or data.DEFAULT_PORT)
@@ -443,7 +463,9 @@ class Lobby(Screen):
         self.joined = {}                 # cid -> [loadout, team]
         self.ips = net.local_addresses()
         maps = {m["key"]: m["name"] for m in data.MAPS}
-        server.info.update(name=app.profile.name, map=maps.get(settings["map"], ""), players=1)
+        self.mode_name = dict(data.MODES).get(settings.get("mode", "tdm"), "")
+        server.info.update(name=app.profile.name, players=1,
+                           map="%s - %s" % (self.mode_name, maps.get(settings["map"], "")))
         self.started = False
 
     def frame(self, dt):
@@ -467,7 +489,7 @@ class Lobby(Screen):
         draw_backdrop(app, 150)
         x = ui.vw / 2 - 560
         ui.panel(x, 90, 1120, 900)
-        ui.text("LOBBY", ui.vw / 2, 122, 46, WHITE, "c")
+        ui.text("LOBBY  -  " + self.mode_name.upper(), ui.vw / 2, 122, 46, WHITE, "c")
         ui.text("Friends on your network will see this game in 'Join Multiplayer'.", ui.vw / 2, 178, 24, WHITE,
                 "c", bold=False)
         ui.text("Or they can type:  %s   port %d" % ("  or  ".join(self.ips[:3]), self.server.port), ui.vw / 2,
@@ -634,6 +656,7 @@ class Battle(Screen):
         self.finished = False
         self.cam = (0, 0)
         self.over_t = 0.0
+        self.watch = 0              # which teammate we are spectating once eliminated
         pygame.mouse.set_visible(False)
         me = session.me()
         if me:                               # start the camera on our side of the map
@@ -733,6 +756,15 @@ class Battle(Screen):
             f0, f1 = mb[0], mb[2] or keys[pygame.K_SPACE]
         self.aim_dist = aim_dist
         s.set_input(thr, turn, aim, f0, f1, aim_dist)
+
+        # --- eliminated: ride along with a teammate (click to switch) -----------------------
+        if me and me.out and not over:
+            mates = [t for t in w.players.values() if t.team == me.team and t.alive]
+            if ui.clicked and not modal:
+                self.watch += 1
+            self.view.follow = mates[self.watch % len(mates)].pid if mates else None
+        else:
+            self.view.follow = None
 
         # --- simulate + draw the world ---------------------------------------------------
         sim_dt = 0.0 if (self.paused and s.can_pause) else dt
@@ -862,7 +894,11 @@ class Battle(Screen):
         limit = w.settings["time_limit"]
         tsec = max(0, limit - w.time) if limit else w.time
         ui.text("%d:%02d" % (tsec // 60, tsec % 60), vw / 2, 22, 34, WHITE, "c")
-        if w.settings["kill_limit"]:
+        if w.flags:
+            n = w.settings["cap_limit"]
+            ui.text("first to %d capture%s" % (n, "" if n == 1 else "s"), vw / 2, 60, 20, DIM, "c", bold=False)
+            self.draw_flags(me)
+        elif w.settings["kill_limit"]:
             ui.text("first to %d" % w.settings["kill_limit"], vw / 2, 60, 20, DIM, "c", bold=False)
         if not me:
             return
@@ -878,6 +914,9 @@ class Battle(Screen):
         col = (110, 210, 120) if frac > 0.5 else (240, 190, 70) if frac > 0.25 else (255, 96, 80)
         ui.bar(44, 1010, 420, 34, frac, col)
         ui.text("%d / %d" % (math.ceil(max(0.0, me.hp)), me.max_hp), 254, 1012, 24, WHITE, "c")
+        if w.flags:
+            ui.text("OUT" if me.out else "Respawns left: %d" % me.respawns, 464, 970, 22,
+                    RED if (me.out or me.respawns == 0) else DIM, "r")
 
         # weapon slots
         x = vw / 2 - 330
@@ -909,6 +948,11 @@ class Battle(Screen):
             col = (255, 120, 30) if z[1] == "fire" else (120, 255, 60)
             r = max(3, z[4] * sx)
             ui.fill(mx0 + z[2] * sx - r, my0 + z[3] * sy - r, r * 2, r * 2, col, 110)
+        for team, f in enumerate(w.flags):                  # bases (hollow) and flags (solid, white rim)
+            hx, hy = w.map.flag_homes[team]
+            pygame.draw.rect(app.screen, data.TEAM_UI[team], ui.r(mx0 + hx * sx - 7, my0 + hy * sy - 7, 14, 14), 2)
+            ui.fill(mx0 + f[1] * sx - 6, my0 + f[2] * sy - 6, 12, 12, (255, 255, 255))
+            ui.fill(mx0 + f[1] * sx - 4, my0 + f[2] * sy - 4, 8, 8, data.TEAM_UI[team])
         for t in w.players.values():
             if t.alive and t is not me:
                 ui.fill(mx0 + t.x * sx - 3, my0 + t.y * sy - 3, 6, 6, data.TEAM_UI[t.team])
@@ -926,22 +970,82 @@ class Battle(Screen):
                 continue
             x = vw - 30
             x -= ui.text(victim, x, y, 22, data.TEAM_UI[vteam], "r")
-            x -= ui.text("  %s  " % WEAPONS[wi]["name"], x, y + 2, 18, DIM, "r", bold=False)
+            if wi is not None:
+                x -= ui.text("  %s  " % WEAPONS[wi]["name"], x, y + 2, 18, DIM, "r", bold=False)
             if killer:
                 ui.text(killer, x, y, 22, data.TEAM_UI[kteam], "r")
             y += 30
         if self.view.banner and self.view.time - self.view.banner[0] < 2.6:
             ui.text(self.view.banner[1], vw / 2, 150, 36, self.view.banner[2], "c")
-        if not me.alive and self.world.over is None and me.deaths == 0:
+        if me.out and self.world.over is None:
+            ui.text("ELIMINATED", vw / 2, 150, 60, RED, "c")
+            seen = w.players.get(self.view.follow) if self.view.follow is not None else None
+            ui.text("No respawns left.  %s" % ("Watching %s - click to switch" % seen.name if seen
+                                             else "Waiting for your team..."), vw / 2, 224, 28, WHITE, "c")
+        elif not me.alive and self.world.over is None and me.deaths == 0:
             ui.text("Deploying...", vw / 2, 440, 40, WHITE, "c")      # not yet placed on the map
         elif not me.alive and self.world.over is None:
             ui.text("DESTROYED", vw / 2, 400, 72, RED, "c")
             ui.text("Back in the fight in %.1f   -   press B to shop or change tank" % max(0.0, me.respawn), vw / 2,
                     490, 30, WHITE, "c")
+            if w.flags:
+                ui.text("This is your last tank!" if me.respawns == 0 else
+                        "%d respawn%s left after this one" % (me.respawns, "" if me.respawns == 1 else "s"),
+                        vw / 2, 536, 26, ORANGE if me.respawns == 0 else DIM, "c")
         elif me.shield > 0:
             ui.text("Spawn shield", vw / 2, 880, 24, (130, 190, 255), "c")
         if me.alive and me.lockout > 0:
             ui.text("Deploying new tank...", vw / 2, 846, 26, GOLD, "c")
+
+    def draw_flags(self, me):
+        """Capture the Flag: status of both flags under the score, and pointers to off-screen objectives."""
+        app, ui, w = self.app, self.ui, self.world
+        vw = ui.vw
+        scr = app.screen
+        sw, sh = scr.get_size()
+        for team, f in enumerate(w.flags):
+            if f[0] == 0:
+                text, col = "at base", DIM
+            elif f[0] == 1:
+                c = w.players.get(f[3])
+                text, col = "TAKEN by %s" % (c.name if c else "?"), ORANGE
+            else:
+                text, col = "dropped - returns in %d" % max(0, math.ceil(f[4])), GOLD
+            x = vw / 2 - 310 if team == 0 else vw / 2 + 310
+            icon = app.assets.ctf["flag_%d" % team]
+            ui.image(icon, x - (56 if team == 0 else 0), 100, 56, 56 * icon.get_height() / icon.get_width(),
+                     "flagicon%d" % team)
+            ui.text(text, x - 66 if team == 0 else x + 66, 108, 22, col, "r" if team == 0 else "l")
+        if not me:
+            return
+        # what should I be doing right now?
+        if me.flag >= 0:
+            own = w.flags[me.team]
+            hint = "You have the flag - take it to your base!" if own[0] == 0 else \
+                "You have the flag, but yours is missing - get it back to score!"
+            ui.text(hint, vw / 2, 236, 28, GOLD, "c")
+        # arrows at the screen edge toward anything important that is out of view
+        targets = []
+        theirs, mine = w.flags[1 - me.team], w.flags[me.team]
+        if me.flag >= 0:
+            targets.append((w.map.flag_homes[me.team], "base_%d" % me.team, "base"))
+        else:
+            targets.append(((theirs[1], theirs[2]), "flag_%d" % (1 - me.team), "enemy flag"))
+        if mine[0] != 0:
+            targets.append(((mine[1], mine[2]), "flag_%d" % me.team, "your flag"))
+        cx, cy = self.cam
+        for (wx, wy), art, label in targets:
+            px, py = wx - cx, wy - cy
+            if 60 < px < sw - 60 and 150 < py < sh - 150:
+                continue
+            ex = max(70, min(sw - 70, px))
+            ey = max(170 * ui.s, min(sh - 170 * ui.s, py))
+            icon = app.assets.scaled(app.assets.ctf[art], 54 * ui.s, 54 * ui.s * 0.94, ("edge", art))
+            scr.blit(icon, (ex - icon.get_width() // 2, ey - icon.get_height() // 2))
+            dist = math.hypot(wx - me.x, wy - me.y) / PPM
+            lab = ui.render("%s  %d m" % (label, dist), 18, WHITE)
+            scr.blit(lab, (max(4, min(sw - lab.get_width() - 4, ex - lab.get_width() // 2)),
+                           ey + icon.get_height() // 2))
 
     def draw_scores(self, x, y):
         ui, w = self.ui, self.world
@@ -958,8 +1062,11 @@ class Battle(Screen):
                 if mine:
                     ui.fill(tx - 8, ry - 2, 560, 26, (255, 255, 255), 40)
                 ui.fill(tx, ry + 3, 16, 16, t.color)
-                ui.text(t.name + ("" if t.is_ai else "  *"), tx + 26, ry - 2, 20, WHITE if not t.is_ai else DIM,
-                        bold=not t.is_ai)
+                ui.text(t.name + ("" if t.is_ai else "  *"), tx + 26, ry - 2, 20,
+                        (110, 114, 120) if t.out else (WHITE if not t.is_ai else DIM), bold=not t.is_ai)
+                if w.flags:
+                    ui.text("OUT" if t.out else "+%d" % t.respawns, tx + 550, ry - 2, 18,
+                            RED if t.out else DIM, "r", bold=False)
                 ui.text(TANKS[TANK_INDEX[t.tank_key]]["name"].replace(" Tank", ""), tx + 250, ry - 2, 18, DIM,
                         bold=False)
                 ui.text(str(t.kills), tx + 420, ry - 2, 20, WHITE, "c")

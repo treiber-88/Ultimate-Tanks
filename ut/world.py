@@ -17,6 +17,7 @@ with open(os.path.join(ROOT, "assets", "tanks", "tanks.json"), encoding="utf-8")
     TANK_ART = json.load(_f)
 
 TAU = math.pi * 2
+FLAG_HOME, FLAG_CARRIED, FLAG_DROPPED = 0, 1, 2
 
 
 def angle_diff(a, b):
@@ -60,6 +61,9 @@ class Tank:
         self.sel = [-1, -1]
         self.last_hit_by = -1
         self.recoil = 0.0
+        self.flag = -1             # Capture the Flag: which team's flag this tank is carrying, or -1
+        self.respawns = data.CTF_RESPAWNS      # Capture the Flag: how many more times this tank may come back
+        self.out = False           # Capture the Flag: destroyed with no respawns left
         # inputs
         self.throttle = 0.0
         self.turn = 0.0
@@ -102,8 +106,10 @@ class Tank:
 
 class World:
     def __init__(self, settings, mirror=False):
-        self.settings = dict(map="valley", seed=1, kill_limit=30, time_limit=600, difficulty=1)
+        self.settings = dict(map="valley", seed=1, kill_limit=30, time_limit=600, difficulty=1, mode="tdm",
+                             cap_limit=3)
         self.settings.update(settings)
+        self.mode = self.settings["mode"] if self.settings["mode"] in ("tdm", "ctf") else "tdm"
         self.map = GameMap(self.settings["map"], self.settings["seed"])
         self.mirror = mirror
         self.rng = random.Random(self.settings["seed"] * 31 + 7)
@@ -120,6 +126,8 @@ class World:
         self._next_proj = 1
         self._next_zone = 1
         self.ai = None
+        # Capture the Flag: one entry per team: [state, x, y, carrier pid, seconds until auto-return]
+        self.flags = [[FLAG_HOME, x, y, -1, 0.0] for x, y in self.map.flag_homes] if self.mode == "ctf" else []
 
     # -- players -----------------------------------------------------------------
     def add_player(self, loadout, team, is_ai=False, skill=1, pid=None):
@@ -131,7 +139,9 @@ class World:
         return t
 
     def remove_player(self, pid):
-        self.players.pop(pid, None)
+        t = self.players.pop(pid, None)
+        if t and t.flag >= 0 and self.flags:
+            self._drop_flag(t)
 
     def team_count(self, team):
         return sum(1 for t in self.players.values() if t.team == team)
@@ -201,13 +211,15 @@ class World:
             if t.alive:
                 self._move(t, dt)
                 self._shoot(t, dt)
-            else:
+            elif not t.out:
                 t.respawn -= dt
                 if t.respawn <= 0:
                     self._spawn(t)
         self._separate(tanks)
         self._step_projectiles(dt)
         self._step_zones(dt)
+        if self.flags and self.over is None:
+            self._step_flags(dt)
         if self.map.nav_dirty and self.time - self._nav_time > 2.0:     # let the AI use freshly cleared ground
             self._nav_time = self.time
             self.map.rebuild_nav()
@@ -251,6 +263,8 @@ class World:
         vmax = data.tank_speed(spec)
         if self.map.shallow_at(t.x, t.y):
             vmax *= 0.55
+        if t.flag >= 0:
+            vmax *= data.FLAG_CARRIER_SPEED
         thr = max(-1.0, min(1.0, t.throttle))
         target = thr * vmax * (1.0 if thr >= 0 else 0.6)
         rate = vmax * (3.5 if abs(target) < abs(t.speed) or target * t.speed < 0 else 1.8) * dt
@@ -469,6 +483,8 @@ class World:
     def _damage(self, t, amount, attacker_pid, attacker_team, wi):
         if not t.alive or t.shield > 0 or self.over is not None:
             return
+        if t.flag >= 0:
+            amount *= data.FLAG_CARRIER_ARMOR
         t.hp -= amount
         if attacker_pid != t.pid:
             t.last_hit_by = attacker_pid
@@ -479,7 +495,7 @@ class World:
         t.alive = False
         t.hp = 0.0
         t.deaths += 1
-        t.respawn = data.RESPAWN_TIME
+        t.respawn = data.CTF_RESPAWN_TIME if self.flags else data.RESPAWN_TIME
         t.fire = [False, False]
         killer = self.players.get(attacker_pid)
         if attacker_pid == t.pid or attacker_team == t.team:
@@ -492,12 +508,93 @@ class World:
             killer.kills += 1
             killer.credits += reward
             killer.earned += reward
-            self.scores[killer.team] += 1
+            if self.mode == "tdm":
+                self.scores[killer.team] += 1
+        if t.flag >= 0:
+            self._drop_flag(t)
+        if self.flags:
+            if t.respawns > 0:
+                t.respawns -= 1
+            else:
+                t.out = True
         self.events.append(("kill", killer.pid if killer else -1, t.pid, wi, round(t.x, 1), round(t.y, 1),
                             round(t.angle, 3), t.tank_key, reward))
         limit = self.settings["kill_limit"]
-        if limit and killer and self.scores[killer.team] >= limit:
+        if self.mode == "tdm" and limit and killer and self.scores[killer.team] >= limit:
             self._finish(killer.team)
+        if t.out:
+            self.events.append(("out", t.pid))
+            self._check_eliminated()
+
+    def _check_eliminated(self):
+        """Capture the Flag: a team with nobody left to field loses on the spot."""
+        gone = [all(p.out for p in self.players.values() if p.team == team) and self.team_count(team) > 0
+                for team in (0, 1)]
+        if gone[0] and gone[1]:
+            self._finish(-1)
+        elif gone[0]:
+            self._finish(1)
+        elif gone[1]:
+            self._finish(0)
+
+    # -- Capture the Flag ----------------------------------------------------------------
+    def _drop_flag(self, t):
+        f = self.flags[t.flag]
+        f[0], f[1], f[2], f[3], f[4] = FLAG_DROPPED, t.x, t.y, -1, data.FLAG_RETURN_TIME
+        self.events.append(("flag", "dropped", t.flag, t.pid))
+        t.flag = -1
+
+    def _send_home(self, team):
+        f = self.flags[team]
+        f[0], f[1], f[2] = FLAG_HOME, self.map.flag_homes[team][0], self.map.flag_homes[team][1]
+        f[3], f[4] = -1, 0.0
+
+    def _step_flags(self, dt):
+        """Pick up, carry, capture, drop and return. A flag belongs to team `ft`; the other team steals it."""
+        alive = [t for t in self.players.values() if t.alive]
+        for ft, f in enumerate(self.flags):
+            if f[0] == FLAG_CARRIED:
+                c = self.players.get(f[3])
+                if c is None or not c.alive or c.flag != ft:
+                    f[0], f[3], f[4] = FLAG_DROPPED, -1, data.FLAG_RETURN_TIME
+                    continue
+                f[1], f[2] = c.x, c.y
+                own = self.flags[c.team]
+                hx, hy = self.map.flag_homes[c.team]
+                reach = c.radius + 34
+                if own[0] == FLAG_HOME and (c.x - hx) ** 2 + (c.y - hy) ** 2 < reach * reach:
+                    c.flag = -1
+                    self._send_home(ft)
+                    self.scores[c.team] += 1
+                    c.credits += data.CAPTURE_REWARD
+                    c.earned += data.CAPTURE_REWARD
+                    self.events.append(("flag", "captured", ft, c.pid))
+                    limit = self.settings["cap_limit"]
+                    if limit and self.scores[c.team] >= limit:
+                        self._finish(c.team)
+                        return
+                continue
+            if f[0] == FLAG_DROPPED:
+                f[4] -= dt
+                if f[4] <= 0:
+                    self._send_home(ft)
+                    self.events.append(("flag", "returned", ft, -1))
+                    continue
+            for t in alive:
+                reach = t.radius + 34
+                if (t.x - f[1]) ** 2 + (t.y - f[2]) ** 2 >= reach * reach:
+                    continue
+                if t.team != ft and t.flag < 0:
+                    f[0], f[3] = FLAG_CARRIED, t.pid
+                    t.flag = ft
+                    self.events.append(("flag", "taken", ft, t.pid))
+                    break
+                if t.team == ft and f[0] == FLAG_DROPPED:
+                    self._send_home(ft)
+                    t.credits += data.RETURN_REWARD
+                    t.earned += data.RETURN_REWARD
+                    self.events.append(("flag", "returned", ft, t.pid))
+                    break
 
     def _step_zones(self, dt):
         if not self.zones:
@@ -534,9 +631,20 @@ class World:
             tk.append([t.pid, 1 if t.alive else 0, round(t.x, 1), round(t.y, 1), round(t.angle, 3),
                        round(t.turret, 3), round(t.hp, 1), TANK_INDEX[t.tank_key], 1 if t.shield > 0 else 0,
                        t.sel[0], t.sel[1], round(max(0.0, t.respawn), 1), t.kills, t.deaths,
-                       round(t.speed, 0)])
+                       round(t.speed, 0), -1 if t.out else t.respawns])
         zn = [[z[0], z[1], round(z[2]), round(z[3]), z[4], round(z[5], 1)] for z in self.zones]
-        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn)
+        fl = [[f[0], round(f[1]), round(f[2]), f[3], round(f[4], 1)] for f in self.flags]
+        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn, fl=fl)
+
+    def apply_flags(self, fl):
+        """Client side: take the flag state from the host."""
+        self.flags = [list(f) for f in fl]
+        for t in self.players.values():
+            t.flag = -1
+        for team, f in enumerate(self.flags):
+            c = self.players.get(f[3])
+            if f[0] == FLAG_CARRIED and c:
+                c.flag = team
 
     def roster(self):
         return [[t.pid, t.name, list(t.color), t.team, 1 if t.is_ai else 0] for t in self.players.values()]
@@ -559,9 +667,10 @@ class World:
         for t in self.players.values():
             ps.append(dict(pid=t.pid, loadout=t.state(), team=t.team, is_ai=t.is_ai, skill=t.skill, kills=t.kills,
                            deaths=t.deaths, earned=t.earned, alive=t.alive, respawn=t.respawn, x=t.x, y=t.y,
+                           respawns=t.respawns, out=t.out,
                            angle=t.angle, turret=t.turret, hp=t.hp, sel=t.sel))
         return dict(settings=self.settings, time=self.time, scores=self.scores, players=ps,
-                    zones=self.zones, crushed=sorted(self.crushed))
+                    zones=self.zones, crushed=sorted(self.crushed), flags=self.flags)
 
     @classmethod
     def from_dict(cls, d):
@@ -571,15 +680,20 @@ class World:
         w.zones = [list(z) for z in d.get("zones", [])]
         for idx in d.get("crushed", []):
             w.crush(int(idx), emit=False)
+        if w.flags and d.get("flags"):
+            w.flags = [list(f) for f in d["flags"]]
         if w.map.nav_dirty:
             w.map.rebuild_nav()
         for p in d["players"]:
             t = w.add_player(p["loadout"], p["team"], p["is_ai"], p["skill"], pid=p["pid"])
             t.kills, t.deaths, t.earned = p["kills"], p["deaths"], p["earned"]
             t.alive, t.respawn = p["alive"], p["respawn"]
+            t.respawns, t.out = p.get("respawns", data.CTF_RESPAWNS), p.get("out", False)
             t.x, t.y, t.angle, t.turret, t.hp = p["x"], p["y"], p["angle"], p["turret"], p["hp"]
             t.aim = t.turret
             for slot in (0, 1):
                 if p["sel"][slot] in data.usable(t.tank_key, t.weapons, slot):
                     t.sel[slot] = p["sel"][slot]
+        if w.flags:
+            w.apply_flags(w.flags)
         return w

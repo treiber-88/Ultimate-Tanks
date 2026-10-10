@@ -200,7 +200,8 @@ class UI:
         if self.button("<", bx, y, 60, 54):
             index = (index - 1) % len(options)
         self.slot(bx + 66, y, 168, 54)
-        self.text(str(options[index]), bx + 150, y + 12, 24, WHITE, "c")
+        label = str(options[index])
+        self.text(label, bx + 150, y + (12 if len(label) <= 13 else 15), 24 if len(label) <= 13 else 19, WHITE, "c")
         if self.button(">", bx + 240, y, 60, 54):
             index = (index + 1) % len(options)
         return index
