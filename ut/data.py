@@ -14,7 +14,12 @@ FIRE_ARC = 0.1              # a player's gun only fires once the turret is withi
 SPAWN_SHIELD = 2.5
 WIN_BONUS, LOSS_BONUS = 30, 10
 DEFAULT_PORT = 27877
-MODES = [("tdm", "Team Deathmatch"), ("ctf", "Capture the Flag")]
+MODES = [("tdm", "Team Deathmatch"), ("ctf", "Capture the Flag"), ("zones", "Zone Defense")]
+ZONE_COUNT = 5
+ZONE_RADIUS = 170           # pixels (8.5 m); matches the rendered ground marking
+ZONE_CAPTURE_TIME = 5.0     # seconds a tank must hold the capture key inside a zone to take it
+ZONE_REWARD = 15            # credits for capturing a zone
+ZONE_NAMES = "ABCDE"
 FLAG_RETURN_TIME = 30.0     # a dropped flag goes home by itself after this many seconds
 FLAG_CARRIER_SPEED = 1.0    # speed multiplier while carrying a flag (1.0 = no penalty)
 FLAG_CARRIER_ARMOR = 0.65   # a flag carrier takes this fraction of normal damage

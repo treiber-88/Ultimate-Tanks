@@ -347,6 +347,17 @@ class BattleView:
                 _, pid, x, y = e
                 self.puff("ring", x, y, 0, 0, 0.6, 40, 220, 200, True, (120, 190, 255))
                 self.track_pos.pop(pid, None)
+            elif kind == "zone":
+                _, what, idx, pid = e
+                me = w.players.get(self.local)
+                who = w.players.get(pid)
+                good = bool(me and who and me.team == who.team)
+                self.banner = (self.time, "%s captured zone %s" % (who.name if who else "?", data.ZONE_NAMES[idx]),
+                               (120, 220, 110) if good else (255, 110, 90))
+                c = w.cps[idx]
+                self.puff("ring", c[0], c[1], 0, 0, 0.7, 120, 560, 255, True,
+                          data.TEAM_UI[who.team] if who else None)
+                self.snd.play("buy" if good else "deny", 0.8)
             elif kind == "out":
                 who = w.players.get(e[1])
                 if who and e[1] != self.local:
@@ -524,6 +535,18 @@ class BattleView:
 
         for o in visible(LAYER_GROUND):
             blit(o[0], (o[1] - cx, o[2] - cy))
+        for i, c in enumerate(self.world.cps):       # Zone Defense: ground markings in the owner's colour
+            zx, zy = c[0], c[1]
+            if cx - 200 < zx < cx + sw + 200 and cy - 200 < zy < cy + sh + 200:
+                art = a.zone_art["n" if c[2] < 0 else str(c[2])]
+                blit(art, (zx - cx - art.get_width() // 2, zy - cy - art.get_height() // 2))
+                if c[3] >= 0:                        # being captured: a ring sweeps round as the clock runs
+                    who = self.world.players.get(c[3])
+                    col = data.TEAM_UI[who.team] if who else (255, 255, 255)
+                    r = data.ZONE_RADIUS + 14
+                    frac = min(1.0, c[4] / data.ZONE_CAPTURE_TIME)
+                    pygame.draw.arc(screen, col, (zx - cx - r, zy - cy - r, r * 2, r * 2), math.pi / 2 - TAU * frac,
+                                    math.pi / 2, 7)
         flags = self.world.flags
         for team in range(len(flags)):               # Capture the Flag: the pads the flags stand on
             hx, hy = self.map.flag_homes[team]

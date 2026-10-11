@@ -317,10 +317,11 @@ class LocalSession:
     def me(self):
         return self.world.players.get(self.pid)
 
-    def set_input(self, throttle, turn, aim, fire0, fire1, dist=None):
+    def set_input(self, throttle, turn, aim, fire0, fire1, dist=None, hold=False):
         t = self.me()
         if t:
             t.throttle, t.turn, t.aim, t.aim_dist = throttle, turn, aim, dist
+            t.hold = bool(hold) and t.alive
             t.fire = [bool(fire0), bool(fire1)] if t.alive else [False, False]
 
     def buy(self, kind, key):
@@ -382,6 +383,7 @@ class LocalSession:
                         t.aim_dist = max(0.0, min(6000.0, float(msg.get("d", 0.0))))
                         f = int(msg.get("f", 0))
                         t.fire = [bool(f & 1), bool(f & 2)] if t.alive else [False, False]
+                        t.hold = bool(f & 4) and t.alive
                     elif kind == "buy":
                         w.buy(pid, str(msg.get("k")), str(msg.get("key")))
                     elif kind == "tank":
@@ -456,8 +458,9 @@ class RemoteSession:
     def me(self):
         return self.world.players.get(self.pid)
 
-    def set_input(self, throttle, turn, aim, fire0, fire1, dist=None):
-        self._input = (throttle, turn, aim, (1 if fire0 else 0) | (2 if fire1 else 0), dist or 0.0)
+    def set_input(self, throttle, turn, aim, fire0, fire1, dist=None, hold=False):
+        self._input = (throttle, turn, aim, (1 if fire0 else 0) | (2 if fire1 else 0) | (4 if hold else 0),
+                       dist or 0.0)
 
     def buy(self, kind, key):
         self.conn.send({"t": "buy", "k": kind, "key": key})
@@ -546,6 +549,8 @@ class RemoteSession:
         # things that are not interpolated are taken from the newest snapshot straight away
         w.time, w.scores, w.over = msg["time"], msg["sc"], msg["over"]
         w.zones = [z + [0, -1, -1] for z in msg["zn"]]
+        if msg.get("cp"):
+            w.apply_cps(msg["cp"])
         if msg.get("fl"):
             w.apply_flags(msg["fl"])
         me = w.players.get(self.pid)

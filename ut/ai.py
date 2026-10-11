@@ -35,6 +35,8 @@ class Brain:
         self.escape_turn = 1.0
         self.last = (0.0, 0.0)
         self.scout = rng.random() < 0.18          # this driver likes the Speed Tank
+        self.zone = -1                            # Zone Defense: the zone this tank is heading for
+        self.zone_until = 0.0
         self.defender = rng.random() < 0.25       # Capture the Flag: stays home to guard the flag
         self.greed = rng.uniform(0.0, 1.0)        # saves up for big purchases instead of buying early
 
@@ -147,8 +149,10 @@ class AIController:
         w = self.world
         m = w.map
         ctf = bool(w.flags)
+        zones = bool(w.cps)
+        t.hold = zones                           # AI tanks capture any zone they are standing in
         enemies = [e for e in alive if e.team != t.team]
-        if not enemies and not ctf:
+        if not enemies and not ctf and not zones:
             b.target, b.heading, b.throttle = -1, None, 0.0
             return
         enemies.sort(key=lambda e: (e.x - t.x) ** 2 + (e.y - t.y) ** 2)
@@ -178,7 +182,7 @@ class AIController:
             want = max(want, WEAPONS[s0]["splash"] + 220)
         to_target = math.atan2(target.y - t.y, target.x - t.x) if target else t.angle
 
-        goal = self._ctf_goal(t) if ctf else None
+        goal = self._ctf_goal(t) if ctf else (self._zone_goal(t, alive) if zones else None)
         if goal:
             key, pos, rush = goal
             dgoal = math.hypot(pos[0] - t.x, pos[1] - t.y)
@@ -198,6 +202,8 @@ class AIController:
         elif goal:
             if not rush and key.startswith("home") and dgoal < 300:
                 b.heading, b.throttle = (to_target if los else None), 0.0     # on guard at the base
+            elif key.startswith("cp") and dgoal < data.ZONE_RADIUS * 0.45:
+                b.heading, b.throttle = (to_target if los else None), 0.0     # sit in the zone and hold it
             elif dgoal < 130:
                 b.heading, b.throttle = math.atan2(pos[1] - t.y, pos[0] - t.x), 1.0
             else:
@@ -233,6 +239,43 @@ class AIController:
         if theirs[0] == 1:
             return "flag%d" % (1 - t.team), (theirs[1], theirs[2]), False    # escort our carrier
         return "flag%d" % (1 - t.team), (theirs[1], theirs[2]), True     # go and get it
+
+    def _zone_goal(self, t, alive):
+        """Zone Defense: which zone to drive to. Attackers pick a zone we do not hold (spread out so the team
+        does not all pile onto one); defenders go to whichever of our zones is under threat."""
+        w = self.world
+        b = t.brain
+        cps = w.cps
+        r = data.ZONE_RADIUS
+        if b.defender:
+            best, score = None, 1e18
+            for i, c in enumerate(cps):
+                if c[2] != t.team:
+                    continue
+                threat = min([math.hypot(e.x - c[0], e.y - c[1]) for e in alive if e.team != t.team] or [1e6])
+                s = threat + math.hypot(c[0] - t.x, c[1] - t.y) * 0.3
+                if s < score:
+                    best, score = i, s
+            if best is not None:
+                return "cp%d" % best, (cps[best][0], cps[best][1]), False
+        cur = b.zone if (0 <= b.zone < len(cps) and cps[b.zone][2] != t.team) else -1
+        if cur < 0 or w.time > b.zone_until:
+            best, score = -1, 1e18
+            for i, c in enumerate(cps):
+                if c[2] == t.team:
+                    continue
+                s = math.hypot(c[0] - t.x, c[1] - t.y) + ((t.pid * 7919 + i * 104729) % 1000) * 0.9
+                if c[2] == -1:
+                    s -= 300                              # an empty zone is a cheap gain
+                if s < score:
+                    best, score = i, s
+            b.zone, b.zone_until = best, w.time + 8.0
+            cur = best
+        if cur < 0:                                       # we hold everything: guard the one nearest the enemy
+            cur = min(range(len(cps)), key=lambda i: min([math.hypot(e.x - cps[i][0], e.y - cps[i][1])
+                                                          for e in alive if e.team != t.team] or [1e6]))
+            return "cp%d" % cur, (cps[cur][0], cps[cur][1]), False
+        return "cp%d" % cur, (cps[cur][0], cps[cur][1]), True
 
     def _path_heading(self, t, fallback, field=None):
         field = field or self.fields[t.team]

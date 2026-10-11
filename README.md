@@ -27,6 +27,7 @@ computer has no prebuilt pygame: install 64-bit Python 3.12 and run `run.bat` ag
 | Next shell type / next automatic weapon | `Q` or mouse wheel / `E` |
 | Pick a weapon directly | `1`–`9`, `0` (in the order of the ammunition list) |
 | Shop and tank swap, mid-battle | `B` |
+| Capture a zone (Zone Defense) | hold `Z` inside it |
 | Scoreboard | hold `Tab` |
 | Pause / menu | `Esc` |
 | Fullscreen | `F11` |
@@ -51,6 +52,16 @@ Pick the game type on the battle setup screen (single player or when hosting).
     the screen edge leads to the enemy flag (or to your base once you are carrying it).
   - AI tanks play it too: most go for the enemy flag, about a quarter stay to guard their own.
     With very large teams (15+ a side) the middle of the map becomes a wall of fire and captures get rare.
+
+- **Zone Defense** - five zones (A to E) are strung across the map. Each side starts holding the one outside
+  its base; the three in between start empty.
+  - Drive into a zone you do not hold and **hold `Z` for 5 seconds** to capture it. You may move and shoot
+    while you do, but leaving the ring, letting go of `Z` or being destroyed starts the count over.
+  - The count pauses while any enemy tank is inside the zone, so defenders can stop a capture by getting in.
+  - Hold all five zones at any moment and you win on the spot. Otherwise the team holding more zones when
+    the timer runs out wins (set the timer on the setup screen, 1-60 minutes); equal zones is a draw.
+  - A capture pays 15 credits. Kills pay as usual but do not count. Respawns are unlimited.
+  - The zones show in their owner's colour on the ground, under the score and on the minimap.
 
 ### How a battle works
 
@@ -179,6 +190,7 @@ python tools/blrun.py "" tools/blender/render_ammo.py       # shells and bullets
 python tools/blrun.py "" tools/blender/render_fx.py         # fire, smoke, flashes, craters, debris
 python tools/blrun.py "" tools/blender/render_ui.py         # logo, menu backdrop, UI skins
 python tools/blrun.py "" tools/blender/render_flags.py      # Capture the Flag flags and base pads
+python tools/blrun.py "" tools/blender/render_zones.py      # Zone Defense ground markings
 ```
 
 The first argument is optional Python run before the script, e.g. `"ONLY=['goliath']"` to re-render one tank.
@@ -199,5 +211,6 @@ python tools/flow_test.py out_dir          # commander creation, shop, save/cont
 python tools/aim_test.py                  # shots land on the cursor point; bush and tree crushing
 python tools/lag_test.py 40 50            # multiplayer smoothness over a simulated bad connection
 python tools/ctf_test.py                  # Capture the Flag rules, AI matches, save/load, client view
+python tools/zone_test.py                 # Zone Defense rules, AI matches, save/load, client view
 python tools/profile_battle.py 1920 1080  # frame-time profile of a 20 v 20 battle
 ```

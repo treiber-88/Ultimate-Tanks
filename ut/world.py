@@ -69,6 +69,7 @@ class Tank:
         self.turn = 0.0
         self.aim = 0.0
         self.aim_dist = None       # how far away the player's cursor is; None = just shoot along the barrel
+        self.hold = False          # Zone Defense: the capture key is being held
         self.fire = [False, False]
         self.brain = None
         self.set_tank(loadout.get("tank", "basic"))
@@ -109,7 +110,7 @@ class World:
         self.settings = dict(map="valley", seed=1, kill_limit=30, time_limit=600, difficulty=1, mode="tdm",
                              cap_limit=3)
         self.settings.update(settings)
-        self.mode = self.settings["mode"] if self.settings["mode"] in ("tdm", "ctf") else "tdm"
+        self.mode = self.settings["mode"] if self.settings["mode"] in ("tdm", "ctf", "zones") else "tdm"
         self.map = GameMap(self.settings["map"], self.settings["seed"])
         self.mirror = mirror
         self.rng = random.Random(self.settings["seed"] * 31 + 7)
@@ -128,6 +129,12 @@ class World:
         self.ai = None
         # Capture the Flag: one entry per team: [state, x, y, carrier pid, seconds until auto-return]
         self.flags = [[FLAG_HOME, x, y, -1, 0.0] for x, y in self.map.flag_homes] if self.mode == "ctf" else []
+        # Zone Defense: one entry per zone: [x, y, owner team or -1, pid capturing or -1, seconds of progress]
+        self.cps = []
+        if self.mode == "zones":
+            self.cps = [[x, y, -1, -1, 0.0] for x, y in self.map.zone_points]
+            self.cps[0][2], self.cps[-1][2] = 0, 1        # each side starts holding the zone outside its base
+            self._count_zones()
 
     # -- players -----------------------------------------------------------------
     def add_player(self, loadout, team, is_ai=False, skill=1, pid=None):
@@ -220,6 +227,8 @@ class World:
         self._step_zones(dt)
         if self.flags and self.over is None:
             self._step_flags(dt)
+        if self.cps and self.over is None:
+            self._step_cps(dt)
         if self.map.nav_dirty and self.time - self._nav_time > 2.0:     # let the AI use freshly cleared ground
             self._nav_time = self.time
             self.map.rebuild_nav()
@@ -537,6 +546,42 @@ class World:
         elif gone[1]:
             self._finish(0)
 
+    # -- Zone Defense ----------------------------------------------------------------------
+    def _count_zones(self):
+        self.scores = [sum(1 for c in self.cps if c[2] == team) for team in (0, 1)]
+
+    def _step_cps(self, dt):
+        """A tank inside a zone it does not own captures it by holding the capture key for 5 seconds.
+        Progress only advances while no enemy tank is inside; leaving, letting go or dying starts it over."""
+        r2 = data.ZONE_RADIUS ** 2
+        alive = [t for t in self.players.values() if t.alive]
+        for i, c in enumerate(self.cps):
+            inside = [t for t in alive if (t.x - c[0]) ** 2 + (t.y - c[1]) ** 2 < r2]
+            cap = self.players.get(c[3])
+            if cap is not None and not (cap in inside and cap.hold and cap.team != c[2]):
+                cap = None
+            if cap is None:
+                c[3], c[4] = -1, 0.0
+                for t in sorted(inside, key=lambda t: t.pid):
+                    if t.hold and t.team != c[2]:
+                        cap = t
+                        c[3] = t.pid
+                        break
+                if cap is None:
+                    continue
+            if any(t.team != cap.team for t in inside):
+                continue                                  # contested: the clock stops until they are driven out
+            c[4] += dt
+            if c[4] >= data.ZONE_CAPTURE_TIME:
+                c[2], c[3], c[4] = cap.team, -1, 0.0
+                cap.credits += data.ZONE_REWARD
+                cap.earned += data.ZONE_REWARD
+                self._count_zones()
+                self.events.append(("zone", "captured", i, cap.pid))
+                if self.scores[cap.team] == len(self.cps):
+                    self._finish(cap.team)                # holding every zone wins on the spot
+                    return
+
     # -- Capture the Flag ----------------------------------------------------------------
     def _drop_flag(self, t):
         f = self.flags[t.flag]
@@ -634,7 +679,13 @@ class World:
                        round(t.speed, 0), -1 if t.out else t.respawns])
         zn = [[z[0], z[1], round(z[2]), round(z[3]), z[4], round(z[5], 1)] for z in self.zones]
         fl = [[f[0], round(f[1]), round(f[2]), f[3], round(f[4], 1)] for f in self.flags]
-        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn, fl=fl)
+        cp = [[c[2], c[3], round(c[4], 2)] for c in self.cps]
+        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn, fl=fl, cp=cp)
+
+    def apply_cps(self, cp):
+        """Client side: take zone ownership and capture progress from the host."""
+        for c, (owner, pid, progress) in zip(self.cps, cp):
+            c[2], c[3], c[4] = owner, pid, progress
 
     def apply_flags(self, fl):
         """Client side: take the flag state from the host."""
@@ -670,7 +721,8 @@ class World:
                            respawns=t.respawns, out=t.out,
                            angle=t.angle, turret=t.turret, hp=t.hp, sel=t.sel))
         return dict(settings=self.settings, time=self.time, scores=self.scores, players=ps,
-                    zones=self.zones, crushed=sorted(self.crushed), flags=self.flags)
+                    zones=self.zones, crushed=sorted(self.crushed), flags=self.flags,
+                    cps=[c[2:] for c in self.cps])
 
     @classmethod
     def from_dict(cls, d):
@@ -680,6 +732,9 @@ class World:
         w.zones = [list(z) for z in d.get("zones", [])]
         for idx in d.get("crushed", []):
             w.crush(int(idx), emit=False)
+        if w.cps and d.get("cps"):
+            w.apply_cps(d["cps"])
+            w._count_zones()
         if w.flags and d.get("flags"):
             w.flags = [list(f) for f in d["flags"]]
         if w.map.nav_dirty:

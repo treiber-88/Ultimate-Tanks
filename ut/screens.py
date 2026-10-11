@@ -392,11 +392,15 @@ class Setup(Screen):
         ui.text("HOST A BATTLE" if self.host else "SINGLE PLAYER BATTLE", ui.vw / 2, 122, 46, WHITE, "c")
         y, w, row = 196, 940, 68
         d["mode"] = ui.choice("Game type", x + 50, y, w, [m[1] for m in data.MODES], d["mode"] % len(data.MODES))
-        ctf = data.MODES[d["mode"]][0] == "ctf"
+        mode = data.MODES[d["mode"]][0]
+        ctf = mode == "ctf"
+        if mode == "zones" and d["minutes"] == 0:
+            d["minutes"] = 10                     # this game type is decided by the clock
         y += row
         d["map"] = ui.choice("Battlefield", x + 50, y, w, [m["name"] for m in data.MAPS], d["map"])
         ui.text("Steal the enemy flag and bring it to your own. Your flag must be at home to score." if ctf
-                else data.MAPS[d["map"]]["desc"], x + 50, y + 58, 22, DIM, bold=False)
+                else "Hold Z for 5 seconds inside a zone to capture it. Most zones when time runs out wins."
+                if mode == "zones" else data.MAPS[d["map"]]["desc"], x + 50, y + 58, 22, DIM, bold=False)
         y += row + 30
         self.seed = ui.stepper("Terrain seed", x + 50, y, w, self.seed, 1, 99999)
         y += row
@@ -408,10 +412,13 @@ class Setup(Screen):
         y += row
         if ctf:
             d["caps"] = ui.stepper("Captures to win", x + 50, y, w, d["caps"], 1, 10)
+        elif mode == "zones":
+            ui.text("To win", x + 50, y + 12, 26, DIM)
+            ui.text("hold all 5 zones, or the most at the end", x + 50 + w, y + 14, 24, WHITE, "r")
         else:
             d["kills"] = ui.stepper("Kills to win", x + 50, y, w, d["kills"], 5, 150, 5)
         y += row
-        d["minutes"] = ui.stepper("Time limit", x + 50, y, w, d["minutes"], 0, 60, 1,
+        d["minutes"] = ui.stepper("Time limit", x + 50, y, w, d["minutes"], 1 if mode == "zones" else 0, 60, 1,
                                   lambda v: "none" if v == 0 else "%d min" % v)
         y += row
         if self.host:
@@ -755,7 +762,7 @@ class Battle(Screen):
             aim_dist = math.hypot(mx + self.cam[0] - px, my + self.cam[1] - py)
             f0, f1 = mb[0], mb[2] or keys[pygame.K_SPACE]
         self.aim_dist = aim_dist
-        s.set_input(thr, turn, aim, f0, f1, aim_dist)
+        s.set_input(thr, turn, aim, f0, f1, aim_dist, bool(me) and not modal and keys[pygame.K_z])
 
         # --- eliminated: ride along with a teammate (click to switch) -----------------------
         if me and me.out and not over:
@@ -894,7 +901,10 @@ class Battle(Screen):
         limit = w.settings["time_limit"]
         tsec = max(0, limit - w.time) if limit else w.time
         ui.text("%d:%02d" % (tsec // 60, tsec % 60), vw / 2, 22, 34, WHITE, "c")
-        if w.flags:
+        if w.cps:
+            ui.text("zones held", vw / 2, 60, 20, DIM, "c", bold=False)
+            self.draw_zones(me)
+        elif w.flags:
             n = w.settings["cap_limit"]
             ui.text("first to %d capture%s" % (n, "" if n == 1 else "s"), vw / 2, 60, 20, DIM, "c", bold=False)
             self.draw_flags(me)
@@ -948,6 +958,12 @@ class Battle(Screen):
             col = (255, 120, 30) if z[1] == "fire" else (120, 255, 60)
             r = max(3, z[4] * sx)
             ui.fill(mx0 + z[2] * sx - r, my0 + z[3] * sy - r, r * 2, r * 2, col, 110)
+        for i, c in enumerate(w.cps):                       # zones: a lettered square in the owner's colour
+            col = (200, 200, 196) if c[2] < 0 else data.TEAM_UI[c[2]]
+            px, py = mx0 + c[0] * sx, my0 + c[1] * sy
+            ui.fill(px - 9, py - 9, 18, 18, (255, 255, 255) if c[3] >= 0 and int(self.view.time * 4) % 2 else (0, 0, 0))
+            ui.fill(px - 7, py - 7, 14, 14, col)
+            ui.text(data.ZONE_NAMES[i], px, py - 9, 13, (0, 0, 0), "c", shadow=False)
         for team, f in enumerate(w.flags):                  # bases (hollow) and flags (solid, white rim)
             hx, hy = w.map.flag_homes[team]
             pygame.draw.rect(app.screen, data.TEAM_UI[team], ui.r(mx0 + hx * sx - 7, my0 + hy * sy - 7, 14, 14), 2)
@@ -996,6 +1012,46 @@ class Battle(Screen):
             ui.text("Spawn shield", vw / 2, 880, 24, (130, 190, 255), "c")
         if me.alive and me.lockout > 0:
             ui.text("Deploying new tank...", vw / 2, 846, 26, GOLD, "c")
+
+    def draw_zones(self, me):
+        """Zone Defense: the five zones under the score, and the capture prompt when standing in one."""
+        ui, w = self.ui, self.world
+        vw = ui.vw
+        n = len(w.cps)
+        x0 = vw / 2 - (n * 64 - 12) / 2
+        here = None
+        for i, c in enumerate(w.cps):
+            x = x0 + i * 64
+            col = (150, 152, 150) if c[2] < 0 else data.TEAM_UI[c[2]]
+            busy = c[3] >= 0
+            ui.fill(x - 3, 101, 58, 46, (255, 255, 255) if busy and int(self.view.time * 4) % 2 else (10, 12, 14))
+            ui.fill(x, 104, 52, 40, col)
+            ui.text(data.ZONE_NAMES[i], x + 26, 106, 30, (12, 14, 16), "c", shadow=False)
+            if busy:
+                who = w.players.get(c[3])
+                ui.bar(x, 148, 52, 8, c[4] / data.ZONE_CAPTURE_TIME, data.TEAM_UI[who.team] if who else WHITE)
+            if me and me.alive and (me.x - c[0]) ** 2 + (me.y - c[1]) ** 2 < data.ZONE_RADIUS ** 2:
+                here = (i, c)
+        if not here:
+            return
+        i, c = here
+        name = data.ZONE_NAMES[i]
+        foes = any(t.alive and t.team != me.team and (t.x - c[0]) ** 2 + (t.y - c[1]) ** 2 < data.ZONE_RADIUS ** 2
+                   for t in w.players.values())
+        if c[2] == me.team:
+            mate = w.players.get(c[3])
+            if mate and mate.team != me.team:
+                ui.text("%s is capturing zone %s - drive them out!" % (mate.name, name), vw / 2, 236, 28, RED, "c")
+            else:
+                ui.text("Zone %s is yours" % name, vw / 2, 236, 24, DIM, "c")
+        elif c[3] == me.pid:
+            ui.text("Capturing zone %s..." % name if not foes else "Zone %s contested - clear the enemy out!" % name,
+                    vw / 2, 236, 28, GOLD if not foes else ORANGE, "c")
+            ui.bar(vw / 2 - 200, 276, 400, 22, c[4] / data.ZONE_CAPTURE_TIME, GOLD)
+        elif c[3] >= 0 and w.players.get(c[3]) and w.players[c[3]].team == me.team:
+            ui.text("%s is capturing zone %s - cover them" % (w.players[c[3]].name, name), vw / 2, 236, 24, DIM, "c")
+        else:
+            ui.text("Hold Z to capture zone %s" % name, vw / 2, 236, 30, GOLD, "c")
 
     def draw_flags(self, me):
         """Capture the Flag: status of both flags under the score, and pointers to off-screen objectives."""

@@ -117,6 +117,8 @@ class Assets:
             self.ctf_meta = json.load(f)
         self.ctf = {n: pygame.image.load(os.path.join(ART, "ctf", n + ".png")).convert_alpha()
                     for n in self.ctf_meta}
+        self.zone_art = {k: pygame.image.load(os.path.join(ART, "zones", "zone_%s.png" % k)).convert_alpha()
+                         for k in ("n", "0", "1")}
 
     # -- tanks ---------------------------------------------------------------------
     def _tank_raw(self, key):
