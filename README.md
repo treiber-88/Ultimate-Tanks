@@ -31,10 +31,41 @@ unidentified developer"), right-click it and choose *Open*.
 | Next shell type / next automatic weapon | `Q` or mouse wheel / `E` |
 | Pick a weapon directly | `1`–`9`, `0` (in the order of the ammunition list) |
 | Shop and tank swap, mid-battle | `B` |
+| Capture a zone (Zone Defense) | hold `Z` inside it |
 | Scoreboard | hold `Tab` |
 | Pause / menu | `Esc` |
 | Fullscreen | `F11`, or `Cmd`+`F` on a Mac |
 | FPS counter | `F3` |
+
+### Game types
+
+Pick the game type on the battle setup screen (single player or when hosting).
+
+- **Team Deathmatch** - first team to the kill target wins.
+- **Capture the Flag** - each team has a flag on a pad at the back of its spawn area. Drive over the enemy
+  flag to pick it up and carry it to your own pad to score; first to the capture target wins.
+  - You can only score while your own flag is at home.
+  - A carrier takes only 65 % of normal damage, and drops the flag where it is destroyed.
+  - Destroyed tanks take 9 seconds to return (4 in deathmatch), so a raid has time to get away.
+  - Every tank can respawn only twice (three tanks in all). Destroyed a third time, it is out for the
+    rest of the match and its driver watches a teammate (click to switch). A team with nobody left
+    loses on the spot.
+  - Touch your own dropped flag to send it home at once; otherwise it returns by itself after 30 seconds.
+  - A capture pays 40 credits and a return 10. Kills still pay as usual but do not count toward the score.
+  - The top of the screen shows where both flags are, the minimap marks flags and bases, and a pointer at
+    the screen edge leads to the enemy flag (or to your base once you are carrying it).
+  - AI tanks play it too: most go for the enemy flag, about a quarter stay to guard their own.
+    With very large teams (15+ a side) the middle of the map becomes a wall of fire and captures get rare.
+
+- **Zone Defense** - five zones (A to E) are strung across the map. Each side starts holding the one outside
+  its base; the three in between start empty.
+  - Drive into a zone you do not hold and **hold `Z` for 5 seconds** to capture it. You may move and shoot
+    while you do, but leaving the ring, letting go of `Z` or being destroyed starts the count over.
+  - The count pauses while any enemy tank is inside the zone, so defenders can stop a capture by getting in.
+  - Hold all five zones at any moment and you win on the spot. Otherwise the team holding more zones when
+    the timer runs out wins (set the timer on the setup screen, 1-60 minutes); equal zones is a draw.
+  - A capture pays 15 credits. Kills pay as usual but do not count. Respawns are unlimited.
+  - The zones show in their owner's colour on the ground, under the score and on the minimap.
 
 ### How a battle works
 
@@ -53,6 +84,24 @@ unidentified developer"), right-click it and choose *Open*.
 - Destroyed tanks respawn after four seconds with a short spawn shield.
 - Fire from the Combust Shell and fallout from the Nuke Shell hurt *everyone* in the area, including you.
 - Trees hide whatever is under them. Rivers can only be crossed at bridges and fords (fords slow you down).
+
+### The AI keeps pace with you
+
+The tanks the AI brings to a battle depend on the best tank in your garage (in multiplayer, the best among
+all the human players). Both teams' AI use the same mix, so your allies improve along with your enemies.
+
+| Your best tank | AI tanks at the start of a battle |
+| --- | --- |
+| Basic | all Basic |
+| Medium or Speed | 60 % Basic, 25 % Medium, 15 % Speed |
+| Heavy | 35 % Basic, 25 % Medium, 20 % Speed, 20 % Heavy |
+| Mammoth | 25 % Mammoth, 20 % Heavy, 20 % Speed, 15 % Medium, 20 % Basic |
+| Goliath | 30 % Goliath, 20 % Mammoth, 20 % Speed, 10 % Medium, 10 % Heavy, 10 % Basic |
+
+Each AI tank arrives with ammunition to match (a Goliath carries Death Shells and a Heavy Gatling, for
+example). The setup screen shows the exact line-up before you start. During the battle the AI still earns
+credits and upgrades as before, so the mix can creep upward in a long fight. The tables are `AI_MIX` and
+`AI_KIT` in [ut/data.py](ut/data.py).
 
 ### Saving
 
@@ -147,6 +196,8 @@ python tools/make_tileable.py                               # ...made seamless
 python tools/blrun.py "" tools/blender/render_ammo.py       # shells and bullets
 python tools/blrun.py "" tools/blender/render_fx.py         # fire, smoke, flashes, craters, debris
 python tools/blrun.py "" tools/blender/render_ui.py         # logo, menu backdrop, UI skins
+python tools/blrun.py "" tools/blender/render_flags.py      # Capture the Flag flags and base pads
+python tools/blrun.py "" tools/blender/render_zones.py      # Zone Defense ground markings
 ```
 
 The first argument is optional Python run before the script, e.g. `"ONLY=['goliath']"` to re-render one tank.
@@ -166,5 +217,7 @@ python tools/net_test.py                  # host + client over localhost
 python tools/flow_test.py out_dir          # commander creation, shop, save/continue, client battle
 python tools/aim_test.py                  # shots land on the cursor point; bush and tree crushing
 python tools/lag_test.py 40 50            # multiplayer smoothness over a simulated bad connection
+python tools/ctf_test.py                  # Capture the Flag rules, AI matches, save/load, client view
+python tools/zone_test.py                 # Zone Defense rules, AI matches, save/load, client view
 python tools/profile_battle.py 1920 1080  # frame-time profile of a 20 v 20 battle
 ```

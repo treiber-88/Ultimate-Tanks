@@ -113,6 +113,12 @@ class Assets:
         for name, shade in (("panel", (120, 124, 132)), ("button", (150, 156, 166)), ("slot", (126, 132, 142))):
             self.ui[name].fill(shade + (255,), special_flags=pygame.BLEND_RGBA_MULT)   # keep text readable
         self.ui["menu_bg"] = pygame.image.load(os.path.join(ART, "ui", "menu_bg.png")).convert()
+        with open(os.path.join(ART, "ctf", "ctf.json"), encoding="utf-8") as f:
+            self.ctf_meta = json.load(f)
+        self.ctf = {n: pygame.image.load(os.path.join(ART, "ctf", n + ".png")).convert_alpha()
+                    for n in self.ctf_meta}
+        self.zone_art = {k: pygame.image.load(os.path.join(ART, "zones", "zone_%s.png" % k)).convert_alpha()
+                         for k in ("n", "0", "1")}
 
     # -- tanks ---------------------------------------------------------------------
     def _tank_raw(self, key):

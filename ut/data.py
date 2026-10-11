@@ -14,6 +14,19 @@ FIRE_ARC = 0.1              # a player's gun only fires once the turret is withi
 SPAWN_SHIELD = 2.5
 WIN_BONUS, LOSS_BONUS = 30, 10
 DEFAULT_PORT = 27877
+MODES = [("tdm", "Team Deathmatch"), ("ctf", "Capture the Flag"), ("zones", "Zone Defense")]
+ZONE_COUNT = 5
+ZONE_RADIUS = 170           # pixels (8.5 m); matches the rendered ground marking
+ZONE_CAPTURE_TIME = 5.0     # seconds a tank must hold the capture key inside a zone to take it
+ZONE_REWARD = 15            # credits for capturing a zone
+ZONE_NAMES = "ABCDE"
+FLAG_RETURN_TIME = 30.0     # a dropped flag goes home by itself after this many seconds
+FLAG_CARRIER_SPEED = 1.0    # speed multiplier while carrying a flag (1.0 = no penalty)
+FLAG_CARRIER_ARMOR = 0.65   # a flag carrier takes this fraction of normal damage
+CTF_RESPAWN_TIME = 9.0      # longer than deathmatch, so a successful attack has time to get away
+CTF_RESPAWNS = 2            # in Capture the Flag a tank comes back this many times, then it is out
+CAPTURE_REWARD = 40         # credits for bringing the enemy flag home
+RETURN_REWARD = 10          # credits for touching your own dropped flag to send it home
 DISCOVERY_PORT = 27878       # UDP: how the Join screen finds games on the local network
 
 SHELL, AUTO = 0, 1          # weapon slots: left mouse fires the cannon, right mouse the machine gun
@@ -110,6 +123,38 @@ MAPS = [
     dict(key="highlands", name="Highlands", desc="Mountain passes, boulders and pine forest. No river."),
     dict(key="farmland", name="Farmland", desc="Open fields, villages and a shallow stream."),
 ]
+
+
+# --- AI opposition scales with the player's garage -------------------------------------------------
+# A player's tier is the best tank they own. AI tanks (both teams) start the battle with this mix of tanks;
+# percentages per tier, best tank first. The last row is the line-up a Goliath owner faces.
+TANK_TIER = dict(basic=0, medium=1, speed=1, heavy=2, mammoth=3, goliath=4)
+AI_MIX = [
+    [("basic", 100)],
+    [("medium", 25), ("speed", 15), ("basic", 60)],
+    [("heavy", 20), ("speed", 20), ("medium", 25), ("basic", 35)],
+    [("mammoth", 25), ("heavy", 20), ("speed", 20), ("medium", 15), ("basic", 20)],
+    [("goliath", 30), ("mammoth", 20), ("speed", 20), ("medium", 10), ("heavy", 10), ("basic", 10)],
+]
+# what an AI driving each tank starts with, on top of the two free weapons
+AI_KIT = dict(basic=[], medium=["gatling", "heavy_shell"], speed=["gatling", "heavy_tracer"],
+              heavy=["heavy_shell", "heavy_gatling"], mammoth=["combust_shell", "heavy_gatling"],
+              goliath=["death_shell", "heavy_gatling"])
+
+
+def player_tier(tanks_owned):
+    return max([TANK_TIER.get(k, 0) for k in tanks_owned] or [0])
+
+
+def ai_lineup(tier, count):
+    """Exactly `count` tank keys in the tier's proportions (largest-remainder rounding), best tanks first."""
+    mix = AI_MIX[max(0, min(len(AI_MIX) - 1, tier))]
+    exact = [(key, pct * count / 100.0) for key, pct in mix]
+    out = {key: int(q) for key, q in exact}
+    left = count - sum(out.values())
+    for key, q in sorted(exact, key=lambda kq: -(kq[1] - int(kq[1])))[:left]:
+        out[key] += 1
+    return [key for key, _pct in mix for _ in range(out[key])]
 
 
 def tank_hp(t):

@@ -439,6 +439,52 @@ class GameMap:
                     (i, o["x"], o["y"], o["kind"] == "tree"))
         self.nav_dirty = False
         self.shallow = (self.water == 2).astype(np.uint8).tobytes()
+        # Capture the Flag: each team's flag stands on open ground a little in front of its spawn zone -
+        # close enough to defend, far enough that respawning tanks do not appear on top of it
+        self.flag_homes = []
+        trees = [(o["x"], o["y"]) for o in self.objects if o["kind"] == "tree"]
+        for i, (x0, y0, x1, y1) in enumerate(self.zones):
+            fy = (y0 + y1) / 2
+            best = None
+            for ahead in (520, 440, 600, 360, 680, 280):
+                fx = x1 + ahead if i == 0 else x0 - ahead
+                for dy in (0, -160, 160, -320, 320, -480, 480):
+                    cx, cy = int(fx) // NAV, int(fy + dy) // NAV
+                    px, py = cx * NAV + NAV / 2, cy * NAV + NAV / 2
+                    if self.nav[cy, cx] or self.blocked_circle(px, py, 90) or self.shallow_at(px, py):
+                        continue
+                    if any(abs(tx - px) < 170 and abs(ty - py) < 170 for tx, ty in trees):
+                        continue                   # keep it out from under tree canopies
+                    best = (px, py)
+                    break
+                if best:
+                    break
+            if best is None:
+                c = self._free_cell(x1 + 300 if i == 0 else x0 - 300, fy)
+                best = (c[0] * NAV + NAV / 2, c[1] * NAV + NAV / 2) if c else ((x0 + x1) / 2, fy)
+            self.flag_homes.append(best)
+        # Zone Defense: five zones strung across the map - one in front of each base, three in between
+        def open_spot(x, y):
+            for r in range(0, 12):
+                for dy in range(-r, r + 1):
+                    for dx in range(-r, r + 1):
+                        if max(abs(dx), abs(dy)) != r:
+                            continue
+                        cx, cy = int(x) // NAV + dx, int(y) // NAV + dy
+                        if not (2 <= cx < NW - 2 and 2 <= cy < NH - 2) or self.nav[cy, cx]:
+                            continue
+                        px, py = cx * NAV + NAV / 2, cy * NAV + NAV / 2
+                        if self.blocked_circle(px, py, 170) or self.blocked_circle(px, py, 90)                                 or self.shallow_at(px, py):
+                            continue                # the whole ring should be clear of rock and buildings
+                        if r < 6 and any(abs(tx - px) < 190 and abs(ty - py) < 190 for tx, ty in trees):
+                            continue                # ...and of trees, unless there is no such spot nearby
+                        if self.river is not None and self.rdist[int(py) // CELL, int(px) // CELL] < self.river_hw + 190:
+                            continue                # keep the whole ring on dry land
+                        return px, py
+            return x, y
+        W, H = self.w, self.h
+        self.zone_points = [self.flag_homes[0], open_spot(W * 0.34, H * 0.2), open_spot(W * 0.5, H * 0.5),
+                            open_spot(W * 0.66, H * 0.8), self.flag_homes[1]]
         self.spawns = []
         for x0, y0, x1, y1 in self.zones:
             pts = []
