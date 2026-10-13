@@ -485,6 +485,13 @@ class GameMap:
         W, H = self.w, self.h
         self.zone_points = [self.flag_homes[0], open_spot(W * 0.34, H * 0.2), open_spot(W * 0.5, H * 0.5),
                             open_spot(W * 0.66, H * 0.8), self.flag_homes[1]]
+        # Free-for-All: places to appear all over the map, not just at the two team ends
+        self.ffa_spawns = []
+        for y in range(400, H - 300, 520):
+            for x in range(400, W - 300, 520):
+                if not self.nav[y // NAV, x // NAV] and not self.blocked_circle(x, y, 80) \
+                        and not self.shallow_at(x, y):
+                    self.ffa_spawns.append((x, y))
         self.spawns = []
         for x0, y0, x1, y1 in self.zones:
             pts = []

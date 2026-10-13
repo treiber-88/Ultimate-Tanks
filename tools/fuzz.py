@@ -1,4 +1,7 @@
-"""Headless soak test: plays battles with random human input (driving, aiming, firing, shop, tank swaps)."""
+"""Headless soak test: plays battles with random human input (driving, aiming, firing, shop, tank swaps).
+
+Usage: python tools/fuzz.py [seconds per map] [seed] [game type]
+"""
 import math, os, random, sys, time, traceback
 os.environ["SDL_VIDEODRIVER"] = "dummy"; os.environ["SDL_AUDIODRIVER"] = "dummy"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -12,6 +15,7 @@ app = main.App()
 p = profiles.Profile("Fuzz"); p.credits = 5000; app.set_profile(p)
 seconds = float(sys.argv[1]) if len(sys.argv) > 1 else 240
 rng = random.Random(int(sys.argv[2]) if len(sys.argv) > 2 else 1)
+MODE = sys.argv[3] if len(sys.argv) > 3 else "tdm"       # any game type key from ut/data.py
 KEYS = [pygame.K_w, pygame.K_a, pygame.K_s, pygame.K_d, pygame.K_SPACE, pygame.K_TAB]
 held = set(); buttons = [False, False, False]; mouse = [800, 450]
 pygame.key.get_pressed = lambda: type("K", (), {"__getitem__": lambda self, k: k in held})()
@@ -19,7 +23,7 @@ pygame.mouse.get_pressed = lambda *a, **k: tuple(buttons)
 pygame.mouse.get_pos = lambda: tuple(mouse)
 PRESS = [pygame.K_q, pygame.K_e, pygame.K_b, pygame.K_ESCAPE] + list(range(pygame.K_0, pygame.K_9 + 1))
 for mi, m in enumerate(data.MAPS):
-    w, pids = screens.build_world(app, dict(map=m["key"], seed=rng.randrange(999), kill_limit=0, time_limit=0, difficulty=2), 8, 9)
+    w, pids = screens.build_world(app, dict(map=m["key"], seed=rng.randrange(999), kill_limit=0, time_limit=0, difficulty=2, mode=MODE), 8, 9)
     b = screens.Battle(app, net.LocalSession(w, pids[0])); app.switch(b)
     me = w.players[pids[0]]
     me.tanks = [t["key"] for t in data.TANKS]; me.weapons = [x["key"] for x in data.WEAPONS]
@@ -43,6 +47,8 @@ for mi, m in enumerate(data.MAPS):
                 o = rng.choice(w.map.objects); me.x, me.y = o["x"] + 90, o["y"]
             app.ui.begin(app.screen, ev)
             app.current.frame(1 / 60)
+            if w.over is not None:
+                break
             if app.current is not b:
                 print("  left battle screen at t=%.1f -> %s" % (w.time, type(app.current).__name__)); break
         print("%s ok: %.0fs game, %d frames, %.1f ms/frame, crushed %d, kills %s" % (m["key"], w.time, f, (time.time() - t0) / f * 1000, len(w.crushed), w.scores))

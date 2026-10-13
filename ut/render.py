@@ -336,8 +336,8 @@ class BattleView:
                 self.snd.play_at("boom", x, y, ear, 1.0)
                 self.add_shake(x, y, 9, 900)
                 kt, vt = w.players.get(killer), w.players.get(victim)
-                self.feed.append((self.time, kt.name if kt else None, kt.team if kt else -1,
-                                  vt.name if vt else "?", vt.team if vt else 0, wi))
+                self.feed.append((self.time, kt.name if kt else None, self.side(kt) if kt else -1,
+                                  vt.name if vt else "?", self.side(vt) if vt else 0, wi))
                 if killer == self.local and reward:
                     self.banner = (self.time, "+%d credits   %s destroyed" % (reward, vt.name if vt else ""),
                                    (255, 214, 90))
@@ -349,6 +349,30 @@ class BattleView:
                 _, pid, x, y = e
                 self.puff("ring", x, y, 0, 0, 0.6, 40, 220, 200, True, (120, 190, 255))
                 self.track_pos.pop(pid, None)
+            elif kind == "note":
+                _, text, team, pid = e
+                me = w.players.get(self.local)
+                if pid >= 0:
+                    good = pid == self.local
+                    col = (255, 214, 90) if good else (236, 238, 240)
+                elif team >= 0 and me is not None:
+                    good = me.team == team
+                    col = (120, 220, 110) if good else (255, 110, 90)
+                else:
+                    good, col = True, (236, 238, 240)
+                self.banner = (self.time, text, col)
+                self.snd.play("buy" if good else "deny", 0.6)
+            elif kind == "sdead":
+                _, idx, x, y = e
+                self.explosion(x, y, 3.6)
+                self.burst("fire%d", x, y, 14, 60, 1.4, 70, 150, 255, True, spread=50, delay=0.5)
+                self.burst("smoke%d", x, y, 12, 40, 4.0, 80, 220, 200, False, (50, 48, 46), spread=60, delay=0.8)
+                self.decal("crater%d" % self.rng.randrange(2), x, y, 260)
+                self.snd.play_at("bigboom", x, y, ear, 1.0, reach=5000)
+                self.add_shake(x, y, 16, 1800)
+            elif kind == "reset":
+                self.wrecks.clear()
+                self.track_pos.clear()
             elif kind == "zone":
                 _, what, idx, pid = e
                 me = w.players.get(self.local)
@@ -391,6 +415,13 @@ class BattleView:
                 _, pid, x, y = e
                 self.puff("ring", x, y, 0, 0, 0.5, 40, 200, 220, True, (255, 220, 120))
                 self.burst("smoke%d", x, y, 6, 60, 0.8, 30, 70, 150, False, (200, 200, 200))
+
+    def side(self, t):
+        """0 / 1 colour index for a tank: its team, or us-versus-them when every tank is its own team."""
+        if self.world.ffa:
+            me = self.world.players.get(self.local)
+            return 0 if (me is not None and t.team == me.team) else 1
+        return t.team % 2
 
     def decal(self, name, x, y, size):
         """Scorch marks and craters are painted straight into the ground, so they cost nothing to keep."""
@@ -582,6 +613,19 @@ class BattleView:
         # tanks
         tanks = [t for t in self.world.players.values()
                  if t.alive and cx - 220 < t.x < cx + sw + 220 and cy - 220 < t.y < cy + sh + 220]
+        for s in self.world.structs:                 # the convoy truck drives among the tanks
+            if s[0] == "truck" and s[5] > 0 and cx - 200 < s[2] < cx + sw + 200 and cy - 200 < s[3] < cy + sh + 200:
+                k = int(round(s[7] / FRAME_STEP)) % 32
+                sh_ = a.modes["truck_%d_shadow" % (s[1] % 2)][k]
+                blit(sh_, (s[2] - cx - sh_.get_width() // 2 + 7, s[3] - cy - sh_.get_height() // 2 + 9))
+                f = a.modes["truck_%d" % (s[1] % 2)][k]
+                blit(f, (s[2] - cx - f.get_width() // 2, s[3] - cy - f.get_height() // 2))
+        marks = self.world.rules.marks() if self.world.rules else {}
+        for t in tanks:
+            if t.pid in marks:                       # VIP / Juggernaut: a gold ring on the ground
+                lvl = 150 + int(70 * math.sin(self.time * 5))
+                g = self.fx_sprite("ring", t.radius * 4.2, (255, 200, 60), True, lvl)
+                blit(g, (t.x - cx - g.get_width() // 2, t.y - cy - g.get_height() // 2), special_flags=ADD)
         for t in tanks:
             hs, _ts = a.tank_shadows(t.tank_key)
             k = int(round(t.angle / FRAME_STEP)) % 32
@@ -627,6 +671,11 @@ class BattleView:
         # scenery above tanks
         for o in visible(LAYER_SOLID):
             blit(o[0], (o[1] - cx, o[2] - cy))
+        for s in self.world.structs:                 # headquarters buildings
+            if s[0] == "hq" and cx - 300 < s[2] < cx + sw + 300 and cy - 300 < s[3] < cy + sh + 300:
+                name = "hq_%d" % (s[1] % 2) if s[5] > 0 else "hq_dead"
+                m = a.modes_meta[name]
+                blit(a.modes[name], (s[2] - cx - m["ax"], s[3] - cy - m["ay"]))
         me = self.world.players.get(self.local)
         for o in visible(LAYER_CANOPY):
             s = o[0]

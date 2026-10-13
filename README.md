@@ -67,6 +67,33 @@ Pick the game type on the battle setup screen (single player or when hosting).
   - A capture pays 15 credits. Kills pay as usual but do not count. Respawns are unlimited.
   - The zones show in their owner's colour on the ground, under the score and on the minimap.
 
+- **King of the Hill** - one zone in the middle of the map. Your team scores a point for every second it
+  is the only team with a tank inside; nobody scores while it is contested or empty. First to the target
+  (30-300 seconds) wins, or whoever is ahead when the timer runs out.
+- **Free-for-All** - no teams; everyone else is an enemy. Tanks appear all over the map rather than at two
+  ends. First to the kill target wins. The scoreboard is one ranking, and your colour on the minimap is blue
+  with everyone else red.
+- **Last Team Standing** - no respawns. When one side is wiped out the other takes the round, and everyone
+  returns for the next one; first to the round target (1-7) wins. A round that drags past three minutes goes
+  to the side with more tanks left. Destroyed players watch a teammate until the round ends.
+- **Base Assault** - each side has a headquarters with 500 health just in front of its spawn area. Destroy
+  the enemy's to win; if the timer runs out, the healthier headquarters wins. Splash, fire and fallout all
+  hurt it, so heavy shells and the nuke earn their keep.
+- **Escort the Convoy** - Blue escorts a slow supply truck from its base to the enemy's while Red tries to
+  destroy it; then the sides swap. A truck that arrives beats one that was destroyed; if both arrive the
+  faster run wins, and if neither does the one that got further wins. The battle's time limit is not used.
+- **Juggernaut** - one tank becomes the Juggernaut: a Goliath with Death Shells and a Heavy Gatling on loan
+  that takes only 40 % damage, hunted by everyone else. Whoever destroys it becomes the next one. You score
+  1 point per kill as the Juggernaut and 3 for bringing it down; first to the points target wins. The loaned
+  tank and ammunition are never added to your garage.
+- **Survival** - every human and allied AI tank on one side against waves of AI tanks. Each wave is one tank
+  bigger than the last and the tanks get better every few waves. Destroyed defenders come back when the wave
+  is cleared, and there are twelve seconds to shop (`B`) before the next one. Clearing a wave pays everyone
+  10 credits plus 5 per wave number. It ends when all defenders are down at once; the result is how many
+  waves you cleared. Good for playing together on one network.
+- **VIP** - each team has one marked tank (gold ring, "VIP" over its name, gold on the minimap). Destroying
+  the enemy VIP scores a point and pays 25 credits; a new VIP is then chosen. First to the target wins.
+
 ### How a battle works
 
 - Two teams. First team to the kill target wins, or whoever leads when the clock runs out.
@@ -171,6 +198,7 @@ main.py            entry point and main loop
 ut/data.py         weapons, tanks, colours, tuning constants
 ut/world.py        the battle simulation (no graphics, no networking)
 ut/ai.py           computer-controlled tanks
+ut/modes.py        rules for the game types beyond deathmatch, flags and zones
 ut/mapgen.py       procedural battlefields (three presets, any seed)
 ut/net.py          multiplayer host/client and the battle sessions
 ut/render.py       ground, scenery, tanks, particles
@@ -198,6 +226,7 @@ python tools/blrun.py "" tools/blender/render_fx.py         # fire, smoke, flash
 python tools/blrun.py "" tools/blender/render_ui.py         # logo, menu backdrop, UI skins
 python tools/blrun.py "" tools/blender/render_flags.py      # Capture the Flag flags and base pads
 python tools/blrun.py "" tools/blender/render_zones.py      # Zone Defense ground markings
+python tools/blrun.py "" tools/blender/render_modes.py      # headquarters and convoy truck
 ```
 
 The first argument is optional Python run before the script, e.g. `"ONLY=['goliath']"` to re-render one tank.
@@ -219,5 +248,6 @@ python tools/aim_test.py                  # shots land on the cursor point; bush
 python tools/lag_test.py 40 50            # multiplayer smoothness over a simulated bad connection
 python tools/ctf_test.py                  # Capture the Flag rules, AI matches, save/load, client view
 python tools/zone_test.py                 # Zone Defense rules, AI matches, save/load, client view
+python tools/modes_test.py                # the eight other game types: AI matches, save/load, client view
 python tools/profile_battle.py 1920 1080  # frame-time profile of a 20 v 20 battle
 ```

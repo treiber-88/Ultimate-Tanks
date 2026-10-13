@@ -10,6 +10,7 @@ import random
 
 from . import data
 from .data import WEAPONS, TANKS, TANK_INDEX, WEAPON_INDEX, SHELL, AUTO, PPM
+from . import modes
 from .mapgen import GameMap, CRUSH_CELL
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,6 +64,9 @@ class Tank:
         self.recoil = 0.0
         self.flag = -1             # Capture the Flag: which team's flag this tank is carrying, or -1
         self.respawns = data.CTF_RESPAWNS      # Capture the Flag: how many more times this tank may come back
+        self.points = 0            # personal score in the individually scored game types
+        self.temp = []             # [kind, key] items lent by the game type (the Juggernaut's Goliath): never saved
+        self.own_tank = loadout.get("tank", "basic")
         self.out = False           # Capture the Flag: destroyed with no respawns left
         # inputs
         self.throttle = 0.0
@@ -90,8 +94,12 @@ class Tank:
 
     def state(self):
         """The part of a player that persists after the battle."""
-        return dict(name=self.name, color=list(self.color), credits=self.credits, tanks=list(self.tanks),
-                    weapons=list(self.weapons), tank=self.tank_key)
+        lent_t = [k for kind, k in self.temp if kind == "tank"]
+        lent_w = [k for kind, k in self.temp if kind == "weapon"]
+        tanks = [k for k in self.tanks if k not in lent_t]
+        tank = self.tank_key if self.tank_key in tanks else (self.own_tank if self.own_tank in tanks else "basic")
+        return dict(name=self.name, color=list(self.color), credits=self.credits, tanks=tanks,
+                    weapons=[k for k in self.weapons if k not in lent_w], tank=tank)
 
     def pivot(self):
         tx = self.art["turret_x"] * PPM
@@ -108,9 +116,9 @@ class Tank:
 class World:
     def __init__(self, settings, mirror=False):
         self.settings = dict(map="valley", seed=1, kill_limit=30, time_limit=600, difficulty=1, mode="tdm",
-                             cap_limit=3)
+                             cap_limit=3, score_limit=100, rounds=3)
         self.settings.update(settings)
-        self.mode = self.settings["mode"] if self.settings["mode"] in ("tdm", "ctf", "zones") else "tdm"
+        self.mode = self.settings["mode"] if self.settings["mode"] in data.MODE_KEYS else "tdm"
         self.map = GameMap(self.settings["map"], self.settings["seed"])
         self.mirror = mirror
         self.rng = random.Random(self.settings["seed"] * 31 + 7)
@@ -135,12 +143,20 @@ class World:
             self.cps = [[x, y, -1, -1, 0.0] for x, y in self.map.zone_points]
             self.cps[0][2], self.cps[-1][2] = 0, 1        # each side starts holding the zone outside its base
             self._count_zones()
+        # the other game types (see modes.py) plug in through `rules`
+        self.ffa = False           # every player is their own team
+        self.structs = []          # headquarters / convoy truck: [kind, team, x, y, radius, hp, max hp, angle]
+        self.ms = {}               # the game type's own state; shared with clients and saved battles
+        self.winner_pid = None     # set when a single player (not a team) wins
+        self.rules = modes.make(self)
 
     # -- players -----------------------------------------------------------------
     def add_player(self, loadout, team, is_ai=False, skill=1, pid=None):
         if pid is None:
             pid = self._next_pid
         self._next_pid = max(self._next_pid, pid) + 1
+        if self.rules:
+            team = self.rules.assign_team(team, pid, is_ai)
         t = Tank(pid, loadout, team, is_ai, skill)
         self.players[pid] = t
         return t
@@ -178,6 +194,9 @@ class World:
         t = self.players.get(pid)
         if not t or key not in t.tanks or key == t.tank_key or not data.usable(key, t.weapons):
             return False
+        if self.rules and not self.rules.can_swap(t):
+            return False
+        t.own_tank = key
         frac = t.hp / t.max_hp if t.alive else 1.0
         t.set_tank(key)
         if t.alive:
@@ -227,22 +246,25 @@ class World:
         self._step_zones(dt)
         if self.flags and self.over is None:
             self._step_flags(dt)
-        if self.cps and self.over is None:
+        if self.mode == "zones" and self.over is None:
             self._step_cps(dt)
+        if self.rules and self.over is None:
+            self.rules.step(dt)
         if self.map.nav_dirty and self.time - self._nav_time > 2.0:     # let the AI use freshly cleared ground
             self._nav_time = self.time
             self.map.rebuild_nav()
         limit = self.settings["time_limit"]
-        if limit and self.time >= limit and self.over is None:
-            a, b = self.scores
-            self._finish(0 if a > b else 1 if b > a else -1)
+        if limit and self.time >= limit and self.over is None and not (self.rules and self.rules.own_clock):
+            if not (self.rules and self.rules.time_up()):
+                a, b = self.scores[0], self.scores[1]
+                self._finish(0 if a > b else 1 if b > a else -1)
 
     def _spawn(self, t):
-        pts = self.map.spawns[t.team]
+        pts = self.map.spawns[t.team % 2]
         enemies = [e for e in self.players.values() if e.alive and e.team != t.team]
         mates = [e for e in self.players.values() if e.alive and e is not t]
-        best, best_score = None, -1e9
-        for _ in range(14):
+        best, best_score = (self.rules.spawn_point(t) if self.rules else None), -1e9
+        for _ in range(14 if best is None else 0):
             x, y = self.rng.choice(pts)
             near_mate = min((math.hypot(e.x - x, e.y - y) for e in mates), default=1e4)
             if near_mate < 130:
@@ -258,6 +280,8 @@ class World:
             self.ai.shop(t)
         t.x, t.y = best
         t.angle = t.turret = t.aim = 0.0 if t.team == 0 else math.pi
+        if self.ffa:
+            t.angle = t.turret = t.aim = math.atan2(self.map.h / 2 - best[1], self.map.w / 2 - best[0]) % TAU
         t.hp = t.max_hp
         t.alive = True
         t.speed = 0.0
@@ -361,6 +385,19 @@ class World:
                         if not m.blocked_circle(b.x + nx, b.y + ny, b.radius):
                             b.x += nx
                             b.y += ny
+        for s in self.structs:                      # buildings and the truck do not give way
+            if s[5] <= 0 and s[0] != "hq":
+                continue
+            for a in alive:
+                dx, dy = a.x - s[2], a.y - s[3]
+                rr = a.radius + s[4] - 4
+                if abs(dx) < rr and abs(dy) < rr:
+                    d = math.hypot(dx, dy) or 1.0
+                    if d < rr:
+                        nx, ny = dx / d * (rr - d), dy / d * (rr - d)
+                        if not m.blocked_circle(a.x + nx, a.y + ny, a.radius):
+                            a.x += nx
+                            a.y += ny
 
     # -- weapons ------------------------------------------------------------------------
     def reload_time(self, t, w):
@@ -446,6 +483,13 @@ class World:
                         if -r < dx < r and -r < dy < r and dx * dx + dy * dy < r * r:
                             hit = ("tank", t)
                             break
+                if not hit:
+                    for s in self.structs:
+                        if s[1] != p[2] and s[5] > 0:
+                            dx, dy = s[2] - x, s[3] - y
+                            if dx * dx + dy * dy < s[4] * s[4]:
+                                hit = ("struct", s)
+                                break
                 if hit:
                     break
                 if p[8] <= 0:
@@ -470,10 +514,19 @@ class World:
         self.events.append(("hit", p[0], round(x, 1), round(y, 1), wi, kind))
         owner = self.players.get(p[1])
         owner_team = p[2]
-        if victim:
+        if kind == "struct":
+            self._damage_struct(victim, w["hit"], p[1])
+        elif victim:
             self._damage(victim, w["hit"], p[1], owner_team, wi)
         if w["splash"]:
             sr = w["splash"]
+            for s in self.structs:
+                if s is victim or s[5] <= 0 or (s[1] == owner_team and not w["hurts_all"]):
+                    continue
+                d = math.hypot(s[2] - x, s[3] - y) - s[4]
+                if d < sr:
+                    self._damage_struct(s, w["hit"] * w["splash_frac"] * (0.2 + 0.8 * (1.0 - max(0.0, d) / sr)),
+                                        p[1])
             for t in list(self.players.values()):
                 if not t.alive or t is victim:
                     continue
@@ -494,17 +547,31 @@ class World:
             return
         if t.flag >= 0:
             amount *= data.FLAG_CARRIER_ARMOR
+        if self.rules:
+            amount *= self.rules.damage_scale(t)
         t.hp -= amount
         if attacker_pid != t.pid:
             t.last_hit_by = attacker_pid
         if t.hp <= 0:
             self._kill(t, attacker_pid, attacker_team, wi)
 
+    def _damage_struct(self, s, amount, attacker_pid):
+        if self.over is not None or s[5] <= 0:
+            return
+        s[5] -= amount
+        self.ms["hit%d" % (s[1] % 2)] = round(self.time, 1)
+        if s[5] <= 0:
+            s[5] = 0.0
+            self.events.append(("sdead", self.structs.index(s), round(s[2]), round(s[3])))
+            if self.rules:
+                self.rules.on_struct_destroyed(s, attacker_pid)
+
     def _kill(self, t, attacker_pid, attacker_team, wi):
         t.alive = False
         t.hp = 0.0
         t.deaths += 1
-        t.respawn = data.CTF_RESPAWN_TIME if self.flags else data.RESPAWN_TIME
+        t.respawn = data.CTF_RESPAWN_TIME if self.flags else \
+            (self.rules.respawn_time(t) if self.rules else data.RESPAWN_TIME)
         t.fire = [False, False]
         killer = self.players.get(attacker_pid)
         if attacker_pid == t.pid or attacker_team == t.team:
@@ -528,12 +595,15 @@ class World:
                 t.out = True
         self.events.append(("kill", killer.pid if killer else -1, t.pid, wi, round(t.x, 1), round(t.y, 1),
                             round(t.angle, 3), t.tank_key, reward))
+        if self.rules and self.over is None:
+            self.rules.on_kill(t, killer)
         limit = self.settings["kill_limit"]
         if self.mode == "tdm" and limit and killer and self.scores[killer.team] >= limit:
             self._finish(killer.team)
         if t.out:
             self.events.append(("out", t.pid))
-            self._check_eliminated()
+            if self.flags:
+                self._check_eliminated()
 
     def _check_eliminated(self):
         """Capture the Flag: a team with nobody left to field loses on the spot."""
@@ -655,14 +725,42 @@ class World:
                 if t.alive and math.hypot(t.x - x, t.y - y) < r + t.radius * 0.4:
                     self._damage(t, dps * dt, owner, team, WEAPON_INDEX["combust_shell" if kind == "fire"
                                                                         else "nuke_shell"])
+            for s in self.structs:
+                if s[5] > 0 and math.hypot(s[2] - x, s[3] - y) < r + s[4] * 0.5:
+                    self._damage_struct(s, dps * dt, owner)
         self.zones = keep
 
-    def _finish(self, winner):
+    def won(self, t):
+        """Did this player win? (Individually scored game types name one player, the others a team.)"""
+        if self.over is None or t is None:
+            return False
+        return t.pid == self.winner_pid if self.winner_pid is not None else t.team == self.over
+
+    def finish(self, winner, pid=None):
+        self._finish(winner, pid)
+
+    def note(self, text, team=-1, pid=-1):
+        """A headline for everyone's screen. It is good news for `team` (or for player `pid`)."""
+        self.events.append(("note", text, team, pid))
+
+    def reset_round(self):
+        """Clear the field and put every tank back at its base (round-based game types)."""
+        self.projectiles.clear()
+        self.zones = []
+        for t in self.players.values():
+            t.alive = False
+            t.out = False
+            t.respawn = 0.0
+            t.fire = [False, False]
+        self.events.append(("reset",))
+
+    def _finish(self, winner, pid=None):
         if self.over is not None:
             return
         self.over = winner
+        self.winner_pid = pid
         for t in self.players.values():
-            bonus = data.WIN_BONUS if t.team == winner else data.LOSS_BONUS
+            bonus = data.WIN_BONUS if self.won(t) else data.LOSS_BONUS
             t.credits += bonus
             t.earned += bonus
             t.fire = [False, False]
@@ -676,11 +774,21 @@ class World:
             tk.append([t.pid, 1 if t.alive else 0, round(t.x, 1), round(t.y, 1), round(t.angle, 3),
                        round(t.turret, 3), round(t.hp, 1), TANK_INDEX[t.tank_key], 1 if t.shield > 0 else 0,
                        t.sel[0], t.sel[1], round(max(0.0, t.respawn), 1), t.kills, t.deaths,
-                       round(t.speed, 0), -1 if t.out else t.respawns])
+                       round(t.speed, 0), -1 if t.out else t.respawns, t.points])
         zn = [[z[0], z[1], round(z[2]), round(z[3]), z[4], round(z[5], 1)] for z in self.zones]
         fl = [[f[0], round(f[1]), round(f[2]), f[3], round(f[4], 1)] for f in self.flags]
         cp = [[c[2], c[3], round(c[4], 2)] for c in self.cps]
-        return dict(time=round(self.time, 3), sc=list(self.scores), over=self.over, tk=tk, zn=zn, fl=fl, cp=cp)
+        st = [[s[1], round(s[2], 1), round(s[3], 1), round(s[5], 1), round(s[7], 3)] for s in self.structs]
+        return dict(time=round(self.time, 3), sc=[round(v, 1) for v in self.scores], over=self.over, tk=tk, zn=zn,
+                    fl=fl, cp=cp, st=st, ms=self.ms, wp=self.winner_pid)
+
+    def apply_mode(self, msg):
+        """Client side: structures, the game type's state and the individual winner from the host."""
+        for s, (team, x, y, hp, ang) in zip(self.structs, msg.get("st", ())):
+            s[1], s[2], s[3], s[5], s[7] = team, x, y, hp, ang
+        if "ms" in msg:
+            self.ms = msg["ms"]
+        self.winner_pid = msg.get("wp")
 
     def apply_cps(self, cp):
         """Client side: take zone ownership and capture progress from the host."""
@@ -718,11 +826,12 @@ class World:
         for t in self.players.values():
             ps.append(dict(pid=t.pid, loadout=t.state(), team=t.team, is_ai=t.is_ai, skill=t.skill, kills=t.kills,
                            deaths=t.deaths, earned=t.earned, alive=t.alive, respawn=t.respawn, x=t.x, y=t.y,
-                           respawns=t.respawns, out=t.out,
+                           respawns=t.respawns, out=t.out, points=t.points, temp=t.temp, own_tank=t.own_tank,
+                           full=[list(t.tanks), list(t.weapons), t.tank_key],
                            angle=t.angle, turret=t.turret, hp=t.hp, sel=t.sel))
         return dict(settings=self.settings, time=self.time, scores=self.scores, players=ps,
                     zones=self.zones, crushed=sorted(self.crushed), flags=self.flags,
-                    cps=[c[2:] for c in self.cps])
+                    cps=[c[2:] for c in self.cps], structs=self.structs, ms=self.ms)
 
     @classmethod
     def from_dict(cls, d):
@@ -744,6 +853,12 @@ class World:
             t.kills, t.deaths, t.earned = p["kills"], p["deaths"], p["earned"]
             t.alive, t.respawn = p["alive"], p["respawn"]
             t.respawns, t.out = p.get("respawns", data.CTF_RESPAWNS), p.get("out", False)
+            t.team = p["team"]
+            t.points, t.own_tank = p.get("points", 0), p.get("own_tank", t.tank_key)
+            if p.get("temp"):                       # items on loan from the game type (the Juggernaut's Goliath)
+                t.temp = [list(i) for i in p["temp"]]
+                t.tanks, t.weapons = list(p["full"][0]), list(p["full"][1])
+                t.set_tank(p["full"][2])
             t.x, t.y, t.angle, t.turret, t.hp = p["x"], p["y"], p["angle"], p["turret"], p["hp"]
             t.aim = t.turret
             for slot in (0, 1):
@@ -751,4 +866,10 @@ class World:
                     t.sel[slot] = p["sel"][slot]
         if w.flags:
             w.apply_flags(w.flags)
+        if d.get("structs") and len(d["structs"]) == len(w.structs):
+            w.structs = [list(s) for s in d["structs"]]
+        if d.get("ms"):
+            w.ms = d["ms"]
+        if w.rules:
+            w.rules.after_load()
         return w

@@ -413,7 +413,7 @@ class LocalSession:
                 snap["roster"] = roster
             t = w.players.get(pid)
             if t:
-                snap["me"] = [t.credits, t.tanks, t.weapons, t.earned]
+                snap["me"] = [t.credits, t.tanks, t.weapons, t.earned, t.temp]
             conn.send(snap)
 
     def close(self):
@@ -551,11 +551,13 @@ class RemoteSession:
         w.zones = [z + [0, -1, -1] for z in msg["zn"]]
         if msg.get("cp"):
             w.apply_cps(msg["cp"])
+        w.apply_mode(msg)
         if msg.get("fl"):
             w.apply_flags(msg["fl"])
         me = w.players.get(self.pid)
         if me and "me" in msg:
-            me.credits, me.tanks, me.weapons, me.earned = msg["me"]
+            me.credits, me.tanks, me.weapons, me.earned = msg["me"][:4]
+            me.temp = msg["me"][4] if len(msg["me"]) > 4 else []
         for row in msg["tk"]:
             t = w.players.get(row[0])
             if t is None:
@@ -572,6 +574,8 @@ class RemoteSession:
             t.kills, t.deaths = row[12], row[13]
             if len(row) > 15:
                 t.out, t.respawns = row[15] < 0, max(0, row[15])
+            if len(row) > 16:
+                t.points = row[16]
             if t.pid == self.pid:
                 self._reconcile(t, row, msg.get("ack", 0.0))
 

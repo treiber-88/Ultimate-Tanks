@@ -119,6 +119,18 @@ class Assets:
                     for n in self.ctf_meta}
         self.zone_art = {k: pygame.image.load(os.path.join(ART, "zones", "zone_%s.png" % k)).convert_alpha()
                          for k in ("n", "0", "1")}
+        # headquarters and convoy truck for Base Assault / Escort
+        with open(os.path.join(ART, "modes", "modes.json"), encoding="utf-8") as f:
+            self.modes_meta = json.load(f)
+        self.modes = {}
+        for name, m in self.modes_meta.items():
+            arr = _np(os.path.join(ART, "modes", name + ".png"))
+            if "frame" in m:        # a sheet of headings, like a tank hull
+                self.modes[name] = frames_of(to_surface(arr), m["frame"], m["frames"], m["cols"])
+                self.modes[name + "_shadow"] = frames_of(shadow_of(arr[..., 3], 0.5), m["frame"], m["frames"],
+                                                         m["cols"])
+            else:
+                self.modes[name] = to_surface(arr)
 
     # -- tanks ---------------------------------------------------------------------
     def _tank_raw(self, key):

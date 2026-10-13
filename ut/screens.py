@@ -364,6 +364,8 @@ def build_world(app, settings, allies, enemies, humans=()):
     skill = settings["difficulty"]
     # the AI's tanks keep pace with the best garage among the human players
     tier = max([data.player_tier(app.profile.tanks)] + [data.player_tier(lo.get("tanks", ())) for lo, _ in humans])
+    if data.MODE_INFO[w.mode].get("no_enemies"):
+        enemies = 0                                  # the game type brings its own opposition
     for team, count in ((0, allies), (1, enemies)):
         lineup = data.ai_lineup(tier, count)
         rng.shuffle(lineup)
@@ -378,7 +380,7 @@ class Setup(Screen):
         super().__init__(app)
         self.host = host
         d = dict(map=0, allies=4, enemies=5, difficulty=1, kills=30, minutes=10, port=str(data.DEFAULT_PORT),
-                 mode=0, caps=3)
+                 mode=0, caps=3, score=100, rounds=3)
         d.update(app.profile.last_setup or {})
         self.d = d
         self.seed = random.randrange(1, 99999)
@@ -393,40 +395,46 @@ class Setup(Screen):
         y, w, row = 196, 940, 68
         d["mode"] = ui.choice("Game type", x + 50, y, w, [m[1] for m in data.MODES], d["mode"] % len(data.MODES))
         mode = data.MODES[d["mode"]][0]
-        ctf = mode == "ctf"
-        if mode == "zones" and d["minutes"] == 0:
+        info = data.MODE_INFO[mode]
+        if info.get("needs_timer") and d["minutes"] == 0:
             d["minutes"] = 10                     # this game type is decided by the clock
         y += row
         d["map"] = ui.choice("Battlefield", x + 50, y, w, [m["name"] for m in data.MAPS], d["map"])
-        ui.text("Steal the enemy flag and bring it to your own. Your flag must be at home to score." if ctf
-                else "Hold Z for 5 seconds inside a zone to capture it. Most zones when time runs out wins."
-                if mode == "zones" else data.MAPS[d["map"]]["desc"], x + 50, y + 58, 22, DIM, bold=False)
+        ui.text(info["desc"] or data.MAPS[d["map"]]["desc"], x + 50, y + 58, 22, DIM, bold=False)
         y += row + 30
         self.seed = ui.stepper("Terrain seed", x + 50, y, w, self.seed, 1, 99999)
         y += row
         d["allies"] = ui.stepper("AI tanks on your team", x + 50, y, w, d["allies"], 0, 20)
         y += row
-        d["enemies"] = ui.stepper("AI tanks on the enemy team", x + 50, y, w, d["enemies"], 0 if self.host else 1, 20)
+        if info.get("no_enemies"):
+            ui.text("Enemy tanks", x + 50, y + 12, 26, DIM)
+            ui.text("waves that grow as you go", x + 50 + w, y + 14, 24, WHITE, "r")
+        else:
+            d["enemies"] = ui.stepper("AI tanks on the enemy team" if mode != "ffa" else "More AI tanks",
+                                      x + 50, y, w, d["enemies"], 0 if self.host else 1, 20)
         y += row
         d["difficulty"] = ui.choice("AI difficulty", x + 50, y, w, data.DIFFICULTIES, d["difficulty"])
         y += row
-        if ctf:
-            d["caps"] = ui.stepper("Captures to win", x + 50, y, w, d["caps"], 1, 10)
-        elif mode == "zones":
-            ui.text("To win", x + 50, y + 12, 26, DIM)
-            ui.text("hold all 5 zones, or the most at the end", x + 50 + w, y + 14, 24, WHITE, "r")
+        if info["limit"]:
+            field, label, lo, hi, step = info["limit"]
+            d[field] = ui.stepper(label, x + 50, y, w, max(lo, min(hi, d[field])), lo, hi, step)
         else:
-            d["kills"] = ui.stepper("Kills to win", x + 50, y, w, d["kills"], 5, 150, 5)
+            ui.text("To win", x + 50, y + 12, 26, DIM)
+            ui.text(info["win"], x + 50 + w, y + 14, 24, WHITE, "r")
         y += row
-        d["minutes"] = ui.stepper("Time limit", x + 50, y, w, d["minutes"], 1 if mode == "zones" else 0, 60, 1,
-                                  lambda v: "none" if v == 0 else "%d min" % v)
+        if mode in ("escort", "survival"):
+            ui.text("Time limit", x + 50, y + 12, 26, DIM)
+            ui.text("not used in this game type", x + 50 + w, y + 14, 24, WHITE, "r")
+        else:
+            d["minutes"] = ui.stepper("Time limit", x + 50, y, w, d["minutes"], 1 if info.get("needs_timer") else 0,
+                                      60, 1, lambda v: "none" if v == 0 else "%d min" % v)
         y += row
         if self.host:
             ui.text("Port", x + 50, y + 12, 26, DIM)
             d["port"] = ui.text_input("port", x + 50 + w - 300, y, 300, 54, d["port"], 5, DIGITS)
         # what the AI will bring, given the best tank in your garage
         lineup = data.ai_lineup(data.player_tier(app.profile.tanks), d["enemies"])
-        if lineup:
+        if lineup and not info.get("no_enemies"):
             names = {t["key"]: t["name"].replace(" Tank", "") for t in TANKS}
             parts = ["%d %s" % (lineup.count(k), names[k]) for k in dict.fromkeys(lineup)]
             ui.text("Enemy AI tanks (they keep pace with your garage):  " + ",  ".join(parts), ui.vw / 2, 832, 20,
@@ -441,7 +449,8 @@ class Setup(Screen):
             app.profile.save()
             settings = dict(map=data.MAPS[d["map"]]["key"], seed=self.seed, kill_limit=d["kills"],
                             time_limit=d["minutes"] * 60, difficulty=d["difficulty"],
-                            mode=data.MODES[d["mode"]][0], cap_limit=d["caps"])
+                            mode=data.MODES[d["mode"]][0], cap_limit=d["caps"], score_limit=d["score"],
+                            rounds=d["rounds"])
             if self.host:
                 try:
                     port = int(d["port"] or data.DEFAULT_PORT)
@@ -697,7 +706,7 @@ class Battle(Screen):
                 p.battles += 1
                 p.kills += me.kills
                 p.deaths += me.deaths
-                if self.world.over == me.team:
+                if self.world.won(me):
                     p.wins += 1
             p.save()
 
@@ -766,7 +775,8 @@ class Battle(Screen):
 
         # --- eliminated: ride along with a teammate (click to switch) -----------------------
         if me and me.out and not over:
-            mates = [t for t in w.players.values() if t.team == me.team and t.alive]
+            mates = [t for t in w.players.values() if t.team == me.team and t.alive] or \
+                    [t for t in w.players.values() if t.alive]
             if ui.clicked and not modal:
                 self.watch += 1
             self.view.follow = mates[self.watch % len(mates)].pid if mates else None
@@ -851,6 +861,22 @@ class Battle(Screen):
         sw, sh = scr.get_size()
         cx, cy = self.cam
         my_team = me.team if me else 0
+        w = self.world
+        marks = w.rules.marks() if w.rules else {}
+        for s in w.structs:                          # headquarters / convoy truck health
+            x, y = s[2] - cx, s[3] - cy
+            if s[5] <= 0 or not (-120 < x < sw + 120 and -120 < y < sh + 120):
+                continue
+            col = (110, 210, 120) if (me and s[1] == my_team) else (255, 96, 80)
+            bw = int(130 * ui.s)
+            by = int(y - s[4] - 46 * ui.s)
+            pygame.draw.rect(scr, (10, 12, 14), (x - bw // 2 - 2, by - 2, bw + 4, int(11 * ui.s) + 4))
+            pygame.draw.rect(scr, col, (x - bw // 2, by, int(bw * s[5] / s[6]), int(11 * ui.s)))
+            lab = ui.render("HEADQUARTERS" if s[0] == "hq" else "CONVOY", 18, col)
+            scr.blit(lab, (x - lab.get_width() // 2, by - lab.get_height() - 2))
+        if me and me.alive and me.pid in marks:      # our own badge, since we get no name tag
+            lab = ui.render(marks[me.pid], 20, GOLD)
+            scr.blit(lab, (me.x - cx - lab.get_width() // 2, me.y - cy - me.radius - 34 * ui.s))
         for t in self.world.players.values():
             if not t.alive or t is me:
                 continue
@@ -865,6 +891,9 @@ class Battle(Screen):
             pygame.draw.rect(scr, col, (x - bw // 2, by, int(bw * max(0.0, t.hp / t.max_hp)), int(7 * ui.s)))
             name = ui.render(t.name, 18, col if not t.is_ai else tuple(int(c * 0.82) for c in col))
             scr.blit(name, (x - name.get_width() // 2, by - name.get_height() - 1))
+            if t.pid in marks:
+                lab = ui.render(marks[t.pid], 20, GOLD)
+                scr.blit(lab, (x - lab.get_width() // 2, by - name.get_height() - lab.get_height() - 1))
 
     def draw_crosshair(self, me):
         scr = self.app.screen
@@ -896,12 +925,19 @@ class Battle(Screen):
         vw = ui.vw
         # score strip
         ui.panel(vw / 2 - 300, 10, 600, 86, 225)
-        ui.text(str(w.scores[0]), vw / 2 - 150, 22, 50, data.TEAM_UI[0], "c")
-        ui.text(str(w.scores[1]), vw / 2 + 150, 22, 50, data.TEAM_UI[1], "c")
-        limit = w.settings["time_limit"]
+        left, right, caption = (w.rules.hud(me) if w.rules else (str(w.scores[0]), str(w.scores[1]), ""))
+        ui.text(left, vw / 2 - 170, 22, 50, data.TEAM_UI[0], "c")
+        ui.text(right, vw / 2 + 170, 22, 50, data.TEAM_UI[1], "c")
+        limit = w.settings["time_limit"] if not (w.rules and w.rules.own_clock) else 0
         tsec = max(0, limit - w.time) if limit else w.time
         ui.text("%d:%02d" % (tsec // 60, tsec % 60), vw / 2, 22, 34, WHITE, "c")
-        if w.cps:
+        if w.rules:
+            ui.text(caption, vw / 2, 60, 20, DIM, "c", bold=False)
+            if me and w.over is None:
+                tones = dict(gold=GOLD, good=GREEN, bad=RED, plain=WHITE)
+                for i, (text, tone) in enumerate(w.rules.hints(me)):
+                    ui.text(text, vw / 2, 104 + i * 34, 26, tones.get(tone, WHITE), "c")
+        elif w.mode == "zones":
             ui.text("zones held", vw / 2, 60, 20, DIM, "c", bold=False)
             self.draw_zones(me)
         elif w.flags:
@@ -969,9 +1005,17 @@ class Battle(Screen):
             pygame.draw.rect(app.screen, data.TEAM_UI[team], ui.r(mx0 + hx * sx - 7, my0 + hy * sy - 7, 14, 14), 2)
             ui.fill(mx0 + f[1] * sx - 6, my0 + f[2] * sy - 6, 12, 12, (255, 255, 255))
             ui.fill(mx0 + f[1] * sx - 4, my0 + f[2] * sy - 4, 8, 8, data.TEAM_UI[team])
+        for s in w.structs:                                 # headquarters / convoy
+            if s[5] > 0:
+                px, py = mx0 + s[2] * sx, my0 + s[3] * sy
+                ui.fill(px - 8, py - 8, 16, 16, (255, 255, 255))
+                ui.fill(px - 6, py - 6, 12, 12, data.TEAM_UI[s[1] % 2])
+        marks = w.rules.marks() if w.rules else {}
         for t in w.players.values():
             if t.alive and t is not me:
-                ui.fill(mx0 + t.x * sx - 3, my0 + t.y * sy - 3, 6, 6, data.TEAM_UI[t.team])
+                if t.pid in marks:
+                    ui.fill(mx0 + t.x * sx - 6, my0 + t.y * sy - 6, 12, 12, GOLD)
+                ui.fill(mx0 + t.x * sx - 3, my0 + t.y * sy - 3, 6, 6, data.TEAM_UI[self.view.side(t)])
         if me.alive:
             ui.fill(mx0 + me.x * sx - 5, my0 + me.y * sy - 5, 10, 10, (0, 0, 0))
             ui.fill(mx0 + me.x * sx - 3.5, my0 + me.y * sy - 3.5, 7, 7, (255, 255, 255))
@@ -992,12 +1036,13 @@ class Battle(Screen):
                 ui.text(killer, x, y, 22, data.TEAM_UI[kteam], "r")
             y += 30
         if self.view.banner and self.view.time - self.view.banner[0] < 2.6:
-            ui.text(self.view.banner[1], vw / 2, 150, 36, self.view.banner[2], "c")
+            ui.text(self.view.banner[1], vw / 2, 150 if not w.rules else 330, 36, self.view.banner[2], "c")
         if me.out and self.world.over is None:
-            ui.text("ELIMINATED", vw / 2, 150, 60, RED, "c")
+            ui.text("ELIMINATED" if not w.rules else "DESTROYED", vw / 2, 190, 60, RED, "c")
             seen = w.players.get(self.view.follow) if self.view.follow is not None else None
-            ui.text("No respawns left.  %s" % ("Watching %s - click to switch" % seen.name if seen
-                                             else "Waiting for your team..."), vw / 2, 224, 28, WHITE, "c")
+            ui.text("%s  %s" % (w.rules.out_text if w.rules else "No respawns left.",
+                                "Watching %s - click to switch" % seen.name if seen else ""), vw / 2, 264, 28,
+                    WHITE, "c")
         elif not me.alive and self.world.over is None and me.deaths == 0:
             ui.text("Deploying...", vw / 2, 440, 40, WHITE, "c")      # not yet placed on the map
         elif not me.alive and self.world.over is None:
@@ -1106,14 +1151,28 @@ class Battle(Screen):
     def draw_scores(self, x, y):
         ui, w = self.ui, self.world
         ui.panel(x, y, 1240, 700, 245)
+        solo = bool(w.rules and w.rules.individual)        # one ranking for everybody, split over two columns
+        ranked = sorted(w.players.values(), key=lambda t: (-t.points, -t.kills, t.deaths))
+        marks = w.rules.marks() if w.rules else {}
         for team in (0, 1):
             tx = x + 40 + team * 600
-            ui.text("%s   %d" % (data.TEAM_NAMES[team], w.scores[team]), tx, y + 30, 34, data.TEAM_UI[team])
+            if solo:
+                ui.text(("STANDINGS" if team == 0 else ""), tx, y + 30, 34, WHITE)
+                rows = ranked[team * 21:team * 21 + 21]
+                if w.mode == "jugg":
+                    ui.text("PTS", tx + 550, y + 84, 22, DIM, "r")
+            else:
+                ui.text("%s   %s" % (data.TEAM_NAMES[team], w.rules.hud(None)[team] if w.rules and w.mode != "ffa"
+                                     else w.scores[team]), tx, y + 30, 34, data.TEAM_UI[team])
+                rows = sorted((t for t in w.players.values() if t.team == team), key=lambda t: (-t.kills, t.deaths))
             ui.text("K", tx + 420, y + 84, 22, DIM, "c")
             ui.text("D", tx + 490, y + 84, 22, DIM, "c")
             ry = y + 116
-            rows = sorted((t for t in w.players.values() if t.team == team), key=lambda t: (-t.kills, t.deaths))
             for t in rows[:21]:
+                if solo and w.mode == "jugg":
+                    ui.text(str(t.points), tx + 550, ry - 2, 20, GOLD, "r")
+                if t.pid in marks:
+                    ui.text(marks[t.pid], tx + 400, ry, 14, GOLD, "r")
                 mine = t.pid == self.session.pid
                 if mine:
                     ui.fill(tx - 8, ry - 2, 560, 26, (255, 255, 255), 40)
@@ -1132,8 +1191,11 @@ class Battle(Screen):
     def draw_results(self, me):
         app, ui, w = self.app, self.ui, self.world
         ui.fill(0, 0, ui.vw + 2, 1082, (0, 0, 0), 140)
-        won = me is not None and w.over == me.team
-        title = "DRAW" if w.over == -1 else ("VICTORY" if won else "DEFEAT")
+        won = me is not None and w.won(me)
+        title = (w.rules.title(me) if w.rules else None) or ("DRAW" if w.over == -1 else ("VICTORY" if won else "DEFEAT"))
+        champ = w.players.get(w.winner_pid) if w.winner_pid is not None else None
+        if champ and not won:
+            ui.text("%s wins" % champ.name, ui.vw / 2, 112, 30, WHITE, "c")
         ui.text(title, ui.vw / 2, 30, 84, GOLD if won else (WHITE if w.over == -1 else RED), "c")
         self.draw_scores(ui.vw / 2 - 620, 150)
         if me:

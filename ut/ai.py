@@ -35,6 +35,7 @@ class Brain:
         self.escape_turn = 1.0
         self.last = (0.0, 0.0)
         self.scout = rng.random() < 0.18          # this driver likes the Speed Tank
+        self.struct = -1                          # index of an enemy building/truck to shoot at, if any
         self.zone = -1                            # Zone Defense: the zone this tank is heading for
         self.zone_until = 0.0
         self.defender = rng.random() < 0.25       # Capture the Flag: stays home to guard the flag
@@ -57,6 +58,8 @@ class AIController:
         w = self.world
         alive = [t for t in w.players.values() if t.alive]
         for team in (0, 1):
+            if w.ffa:
+                break                      # no sides: each tank navigates to its own target instead
             self.field_time[team] -= dt
             if self.field_time[team] <= 0 or self.fields[team] is None:
                 self.field_time[team] = 0.6
@@ -107,6 +110,23 @@ class AIController:
 
         # --- gunnery ------------------------------------------------------------------
         t.fire[0] = t.fire[1] = False
+        if 0 <= b.struct < len(w.structs) and w.structs[b.struct][5] > 0:
+            # the objective comes first: bombard the enemy headquarters / convoy truck whenever it is in reach
+            s = w.structs[b.struct]
+            dist = math.hypot(s[2] - t.x, s[3] - t.y)
+            reach = max([WEAPONS[i]["range"] for i in t.sel if i >= 0] or [0]) * 0.9
+            if dist - s[4] < reach and w.map.line_of_fire(t.x, t.y, s[2], s[3]):
+                t.aim = math.atan2(s[3] - t.y, s[2] - t.x)
+                off = abs(angle_diff(t.aim, t.turret))
+                for slot in (SHELL, AUTO):
+                    wi = t.sel[slot]
+                    if wi < 0:
+                        continue
+                    wp = WEAPONS[wi]
+                    danger = (wp["splash"] + 80) if (wp["hurts_all"] or wp["zone"]) else 0
+                    if dist - s[4] < wp["range"] * 0.9 and dist > danger and off < 0.1:
+                        t.fire[slot] = True
+                return
         if not target:
             t.aim = t.angle
             b.seen_for = 0.0
@@ -149,15 +169,19 @@ class AIController:
         w = self.world
         m = w.map
         ctf = bool(w.flags)
-        zones = bool(w.cps)
+        zones = w.mode == "zones"
+        rules = w.rules
         t.hold = zones                           # AI tanks capture any zone they are standing in
+        b.struct = rules.ai_struct(t) if rules else -1
         enemies = [e for e in alive if e.team != t.team]
-        if not enemies and not ctf and not zones:
+        if not enemies and not ctf and not zones and not rules:
             b.target, b.heading, b.throttle = -1, None, 0.0
             return
         enemies.sort(key=lambda e: (e.x - t.x) ** 2 + (e.y - t.y) ** 2)
         if ctf:                                  # whoever has our flag is the priority target
             enemies.sort(key=lambda e: e.flag != t.team)
+        if rules:                                # e.g. the enemy VIP
+            enemies.sort(key=lambda e: not rules.ai_priority(t, e))
         target, los = (enemies[0], False) if enemies else (None, False)
         for e in enemies[:3]:
             if m.line_of_fire(t.x, t.y, e.x, e.y):
@@ -183,6 +207,9 @@ class AIController:
         to_target = math.atan2(target.y - t.y, target.x - t.x) if target else t.angle
 
         goal = self._ctf_goal(t) if ctf else (self._zone_goal(t, alive) if zones else None)
+        if rules:
+            goal = rules.ai_goal(self, t, alive, target)
+        st = w.structs[b.struct] if 0 <= b.struct < len(w.structs) else None
         if goal:
             key, pos, rush = goal
             dgoal = math.hypot(pos[0] - t.x, pos[1] - t.y)
@@ -204,11 +231,18 @@ class AIController:
                 b.heading, b.throttle = (to_target if los else None), 0.0     # on guard at the base
             elif key.startswith("cp") and dgoal < data.ZONE_RADIUS * 0.45:
                 b.heading, b.throttle = (to_target if los else None), 0.0     # sit in the zone and hold it
+            elif st is not None and rush and st[5] > 0 and dgoal - st[4] < reach * 0.7 \
+                    and m.line_of_fire(t.x, t.y, st[2], st[3]):
+                b.heading, b.throttle = math.atan2(st[3] - t.y, st[2] - t.x), 0.0     # in range: stop and shell it
+            elif not rush and key in ("truck",) and dgoal < 230:
+                b.heading, b.throttle = (to_target if los else None), 0.0     # escorts keep station by the truck
             elif dgoal < 130:
                 b.heading, b.throttle = math.atan2(pos[1] - t.y, pos[0] - t.x), 1.0
             else:
                 b.heading = self._path_heading(t, math.atan2(pos[1] - t.y, pos[0] - t.x), self._field_to(key, pos))
                 b.throttle = 1.0
+        elif w.ffa:
+            b.heading, b.throttle = None, 0.0
         else:
             b.heading = self._path_heading(t, to_target)
             b.throttle = 1.0
@@ -218,7 +252,7 @@ class AIController:
         cell = (int(pos[0]) // NAV, int(pos[1]) // NAV)
         now = self.world.time
         g = self.goal_fields.get(key)
-        if g is None or (g[0] != cell and now - g[1] > 0.4):
+        if g is None or (g[0] != cell and now - g[1] > (1.0 if key.startswith("ffa") else 0.4)):
             g = [cell, now, self.world.map.flow_field([cell])]
             self.goal_fields[key] = g
         return g[2]

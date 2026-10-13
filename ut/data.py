@@ -14,7 +14,36 @@ FIRE_ARC = 0.1              # a player's gun only fires once the turret is withi
 SPAWN_SHIELD = 2.5
 WIN_BONUS, LOSS_BONUS = 30, 10
 DEFAULT_PORT = 27877
-MODES = [("tdm", "Team Deathmatch"), ("ctf", "Capture the Flag"), ("zones", "Zone Defense")]
+MODES = [("tdm", "Team Deathmatch"), ("ctf", "Capture the Flag"), ("zones", "Zone Defense"),
+         ("koth", "King of the Hill"), ("ffa", "Free-for-All"), ("lts", "Last Team Standing"),
+         ("base", "Base Assault"), ("escort", "Escort the Convoy"), ("jugg", "Juggernaut"),
+         ("survival", "Survival"), ("vip", "VIP")]
+MODE_KEYS = [m[0] for m in MODES]
+# Per game type: a one-line description, and the "what it takes to win" setting shown on the setup screen as
+# (settings field, label, lowest, highest, step). needs_timer: the type cannot be played with no time limit.
+MODE_INFO = dict(
+    tdm=dict(desc="", limit=("kills", "Kills to win", 5, 150, 5)),
+    ctf=dict(desc="Steal the enemy flag and bring it to your own. Your flag must be at home to score.",
+             limit=("caps", "Captures to win", 1, 10, 1)),
+    zones=dict(desc="Hold Z for 5 seconds inside a zone to capture it. Most zones when time runs out wins.",
+               limit=None, needs_timer=True, win="hold all 5 zones, or the most at the end"),
+    koth=dict(desc="One zone in the middle. Your team scores every second it is the only one inside.",
+              limit=("score", "Seconds to win", 30, 300, 10)),
+    ffa=dict(desc="No teams: every tank for itself. First to the kill target wins.",
+             limit=("kills", "Kills to win", 5, 150, 5)),
+    lts=dict(desc="No respawns. Wipe out the other side to take the round.",
+             limit=("rounds", "Rounds to win", 1, 7, 1)),
+    base=dict(desc="Each side has a headquarters. Destroy the enemy's before they destroy yours.",
+              limit=None, win="destroy the enemy headquarters"),
+    escort=dict(desc="Escort your supply truck across the map, then stop theirs. The longer run wins.",
+                limit=None, win="get your convoy further than theirs"),
+    jugg=dict(desc="One tank is an armoured Goliath hunted by all. Destroy it to become the Juggernaut.",
+              limit=("kills", "Points to win", 5, 150, 5)),
+    survival=dict(desc="Everyone together against waves of AI tanks that keep getting tougher.",
+                  limit=None, win="survive as many waves as you can", no_enemies=True),
+    vip=dict(desc="Each team has one marked tank. Destroy the enemy VIP to score.",
+             limit=("caps", "VIP kills to win", 1, 10, 1)),
+)
 ZONE_COUNT = 5
 ZONE_RADIUS = 170           # pixels (8.5 m); matches the rendered ground marking
 ZONE_CAPTURE_TIME = 5.0     # seconds a tank must hold the capture key inside a zone to take it
