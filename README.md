@@ -5,7 +5,8 @@ of ammunition. Every piece of art was modelled and rendered in Blender.
 
 ## Playing
 
-On Windows double-click `run.bat`; on a Mac double-click `run.command`. Or from a terminal:
+On Windows double-click `run.bat`; on a Mac double-click `run.command`. On Linux, or from a terminal on
+any platform:
 
 ```
 pip install -r requirements.txt
@@ -14,7 +15,9 @@ python main.py
 
 Needs 64-bit Python 3.10–3.13 with `pygame-ce` (or classic `pygame` 2.5+), `numpy` and `pillow`.
 `run.bat` and `run.command` install them the first time. If you see *failed to build pygame*, the Python on
-that computer has no prebuilt pygame: install 64-bit Python 3.12 and run the launcher again.
+that computer has no prebuilt pygame: install 64-bit Python 3.12 and run the launcher again. On Linux this
+also works with a virtual environment (`python -m venv .venv && .venv/bin/pip install -r requirements.txt
+&& .venv/bin/python main.py`), and runs the same as on Windows and Mac - no platform-specific code is used.
 
 On a Mac, `run.command` keeps the libraries in a `.venv` folder next to the game, so nothing else on the
 computer is changed. If macOS refuses to open it the first time ("cannot be opened because it is from an

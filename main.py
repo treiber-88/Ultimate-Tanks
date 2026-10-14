@@ -46,6 +46,7 @@ class App:
         self.running = True
         self.current = None
         self.show_fps = False
+        self._gave_up_min_size = False
         last = profiles.last_profile_name()
         found = [p for p in profiles.list_profiles() if p.name == last]
         if found:
@@ -94,7 +95,18 @@ class App:
                 if e.type == pygame.QUIT:
                     self.running = False
                 elif e.type == pygame.VIDEORESIZE and not (self.screen.get_flags() & pygame.FULLSCREEN):
-                    self.screen = pygame.display.set_mode((max(1024, e.w), max(600, e.h)), pygame.RESIZABLE)
+                    # Tiling window managers (e.g. Hyprland) can force a window below this
+                    # minimum, sometimes across a few slightly different sizes as it animates
+                    # into place, and will just force it right back if we re-assert it. Try
+                    # the correction once; if that doesn't stick, stop fighting it for good
+                    # instead of re-triggering a resize (and the visible flicker that causes)
+                    # on every settling frame.
+                    size = (max(1024, e.w), max(600, e.h))
+                    if size == (e.w, e.h) or self._gave_up_min_size:
+                        self.screen = pygame.display.get_surface()
+                    else:
+                        self._gave_up_min_size = True
+                        self.screen = pygame.display.set_mode(size, pygame.RESIZABLE)
                 elif e.type == pygame.KEYDOWN and e.key == pygame.K_F3:
                     self.show_fps = not self.show_fps
             self.ui.begin(self.screen, events)
