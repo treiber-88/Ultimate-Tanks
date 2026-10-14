@@ -216,8 +216,10 @@ class ShopView:
         self.view = None
         self.note = None
 
-    def draw(self, x, y, credits, tanks, weapons, current, color, buy, use):
-        """buy(kind, key) and use(tank_key) are callbacks. Returns nothing; all state lives with the caller."""
+    def draw(self, x, y, credits, tanks, weapons, current, color, buy, use, upgrades=None, locked=False):
+        """buy(kind, key) and use(tank_key) are callbacks. Returns nothing; all state lives with the caller.
+        upgrades: {tank key: [engine, armour, loader]}. locked: the game type forbids upgrades right now."""
+        upgrades = upgrades or {}
         app, ui = self.app, self.app.ui
         if self.view not in TANK_INDEX:
             self.view = current
@@ -249,18 +251,51 @@ class ShopView:
         k = t["key"]
         owned = k in tanks
         cx = x + 460
-        ui.image(app.assets.preview(k, color, 512), cx + 60, y + 60, 440, 440, ("pv512", k, tuple(color)))
-        ui.text(t["name"].upper(), cx + 280, y + 500, 44, WHITE, "c")
-        ui.wrap(t["desc"], cx + 20, y + 562, 540, 24)
+        lv = upgrades.get(k, [0] * len(data.UPGRADES))
+        ui.image(app.assets.preview(k, color, 512), cx + 130, y + 50, 300, 300, ("pv512s", k, tuple(color)))
+        ui.text(t["name"].upper(), cx + 280, y + 350, 40, WHITE, "c")
+        ui.wrap(t["desc"], cx + 20, y + 402, 540, 22)
         barrels = len(app.assets.tank_meta[k]["muzzles"])
-        sy = y + 634
-        for label, val, col in (("Speed", t["speed"], (110, 190, 255)), ("Strength", t["strength"], (255, 150, 60))):
+        sy = y + 462
+        for label, val, kind, col in (("Speed", t["speed"], 0, (110, 190, 255)),
+                                      ("Strength", t["strength"], 1, (255, 150, 60))):
+            boosted = val * (1 + data.UPGRADES[kind][2] * lv[kind])
             ui.text(label, cx + 20, sy, 24, DIM)
-            ui.bar(cx + 150, sy + 4, 330, 24, val / 20.0, col)
-            ui.text(str(val), cx + 500, sy, 24)
-            sy += 38
+            ui.bar(cx + 150, sy + 4, 300, 24, min(1.0, boosted / 20.0), col)
+            if lv[kind]:                              # the upgraded part of the bar, in green
+                ui.fill(cx + 152 + 296 * min(1.0, val / 20.0), sy + 6, 296 * (min(1.0, boosted / 20.0) -
+                                                                              min(1.0, val / 20.0)), 20, GREEN)
+            ui.text(("%.1f" % boosted).rstrip("0").rstrip("."), cx + 470, sy, 24, GREEN if lv[kind] else WHITE)
+            sy += 36
         ui.text("Barrels", cx + 20, sy, 24, DIM)
         ui.text(str(barrels), cx + 150, sy, 24)
+        if lv[2]:
+            ui.text(data.upgrade_text(2, lv[2]).capitalize(), cx + 250, sy, 24, GREEN)
+        # --- upgrades for this tank ---------------------------------------------------
+        uy = y + 590
+        ui.text("UPGRADES", cx + 20, uy, 24, DIM)
+        if not owned:
+            ui.text("buy the tank to upgrade it", cx + 540, uy + 2, 20, DIM, "r", bold=False)
+        elif locked:
+            ui.text("not in this game type", cx + 540, uy + 2, 20, ORANGE, "r", bold=False)
+        for kind, (_key, name, _per) in enumerate(data.UPGRADES):
+            ry = uy + 32 + kind * 42
+            ui.text(name, cx + 20, ry + 6, 22, WHITE if owned else DIM)
+            for p in range(data.UPGRADE_MAX):          # level pips
+                ui.fill(cx + 120 + p * 26, ry + 8, 20, 20, (10, 12, 14))
+                if p < lv[kind]:
+                    ui.fill(cx + 122 + p * 26, ry + 10, 16, 16, GREEN)
+            ui.text(data.upgrade_text(kind, lv[kind] + (lv[kind] < data.UPGRADE_MAX)) if owned else "",
+                    cx + 260, ry + 8, 18, DIM, bold=False)
+            if lv[kind] >= data.UPGRADE_MAX:
+                ui.text("MAX", cx + 520, ry + 6, 22, GREEN, "c")
+            elif owned:
+                cost = data.upgrade_cost(k, lv[kind] + 1)
+                if ui.button(str(cost), cx + 450, ry, 140, 38, credits >= cost and not locked, size=22, color=GOLD):
+                    if buy("upgrade", "%s:%d" % (k, kind)):
+                        app.sound.play("buy")
+                    else:
+                        app.sound.play("deny")
         allowed = t["weapons"]
         can_arm = bool(data.usable(k, weapons))
         by = y + H - 100
@@ -326,12 +361,16 @@ class Garage(Screen):
             p.save()
 
         def buy(kind, key):
-            ok = p.buy_tank(key) if kind == "tank" else p.buy_weapon(key)
+            if kind == "upgrade":
+                tank_key, _, which = key.partition(":")
+                ok = p.buy_upgrade(tank_key, int(which))
+            else:
+                ok = p.buy_tank(key) if kind == "tank" else p.buy_weapon(key)
             if ok:
                 p.save()
             return ok
 
-        self.shop.draw(x, 30, p.credits, p.tanks, p.weapons, p.tank, p.color, buy, use)
+        self.shop.draw(x, 30, p.credits, p.tanks, p.weapons, p.tank, p.color, buy, use, p.upgrades)
         # paint shop
         ui.panel(x, 900, 1780, 150, 248)
         ui.text("PAINT", x + 40, 950, 30, DIM)
@@ -404,11 +443,13 @@ class Setup(Screen):
         y += row + 30
         self.seed = ui.stepper("Terrain seed", x + 50, y, w, self.seed, 1, 99999)
         y += row
-        d["allies"] = ui.stepper("AI tanks on your team", x + 50, y, w, d["allies"], 0, 20)
+        d["allies"] = ui.stepper("AI tanks" if mode in ("jugg", "ffa") else "AI tanks on your team", x + 50, y, w,
+                                 max(1, d["allies"]) if mode == "jugg" and not self.host else d["allies"],
+                                 1 if mode == "jugg" and not self.host else 0, 20)
         y += row
         if info.get("no_enemies"):
             ui.text("Enemy tanks", x + 50, y + 12, 26, DIM)
-            ui.text("waves that grow as you go", x + 50 + w, y + 14, 24, WHITE, "r")
+            ui.text(info.get("enemy_text", ""), x + 50 + w, y + 14, 24, WHITE, "r")
         else:
             d["enemies"] = ui.stepper("AI tanks on the enemy team" if mode != "ffa" else "More AI tanks",
                                       x + 50, y, w, d["enemies"], 0 if self.host else 1, 20)
@@ -686,7 +727,7 @@ class Battle(Screen):
         me = self.session.me()
         if not me:
             return
-        opts = data.usable(me.tank_key, me.weapons, slot)
+        opts = me.usable(slot)
         if len(opts) > 1:
             i = opts.index(me.sel[slot]) if me.sel[slot] in opts else 0
             self.session.select_weapon(slot, opts[(i + step) % len(opts)])
@@ -745,7 +786,7 @@ class Battle(Screen):
                     self.cycle(AUTO)
                 elif pygame.K_0 <= k <= pygame.K_9 and me:
                     i = (k - pygame.K_1) % 10
-                    if i in data.usable(me.tank_key, me.weapons):
+                    if i in me.usable():
                         s.select_weapon(WEAPONS[i]["slot"], i)
                         me.sel[WEAPONS[i]["slot"]] = i
         if ui.wheel and not modal:
@@ -827,7 +868,10 @@ class Battle(Screen):
             pygame.mouse.set_visible(True)
             ui.fill(0, 0, ui.vw + 2, 1082, (0, 0, 0), 110)
             self.shop.draw(ui.vw / 2 - 890, 30, me.credits, me.tanks, me.weapons, me.tank_key, me.color, s.buy,
-                           s.select_tank)
+                           s.select_tank, me.upgrades, bool(me.allow))
+            if me.allow:
+                ui.text("This game type assigns your tank and ammunition. Purchases are kept for other battles.",
+                        ui.vw / 2, 934, 24, GOLD, "c")
             ui.text("The battle is still running!  B or Esc to close" if not s.can_pause else "B or Esc to close",
                     ui.vw / 2, 898, 26, ORANGE if not s.can_pause else DIM, "c")
         elif self.paused:
@@ -979,7 +1023,7 @@ class Battle(Screen):
                 left = max(0.0, me.cool.get(wi, 0.0))
                 ready = 1.0 - min(1.0, left / total) if total > 0.2 else 1.0
                 ui.bar(x + 110, 1004, 192, 16, ready, (120, 220, 110) if ready >= 1 else (255, 170, 60))
-                n = len(data.usable(me.tank_key, me.weapons, slot))
+                n = len(me.usable(slot))
                 ui.text("%s%s" % (hint, "    %s: next (%d)" % (key, n) if n > 1 else ""), x + 110, 1028, 20, DIM,
                         bold=False)
             x += 340

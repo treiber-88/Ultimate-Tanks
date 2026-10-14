@@ -292,7 +292,7 @@ def clean_loadout(lo):
         credits = 0
     tank = lo.get("tank", "basic")
     return dict(name=name, color=color, credits=credits, tanks=tanks, weapons=weapons,
-                tank=tank if tank in tanks else "basic")
+                tank=tank if tank in tanks else "basic", upgrades=data.clean_upgrades(lo.get("upgrades")))
 
 
 # ---------------------------------------------------------------------------
@@ -413,7 +413,7 @@ class LocalSession:
                 snap["roster"] = roster
             t = w.players.get(pid)
             if t:
-                snap["me"] = [t.credits, t.tanks, t.weapons, t.earned, t.temp]
+                snap["me"] = [t.credits, t.tanks, t.weapons, t.earned, t.temp, t.upgrades]
             conn.send(snap)
 
     def close(self):
@@ -552,12 +552,16 @@ class RemoteSession:
         if msg.get("cp"):
             w.apply_cps(msg["cp"])
         w.apply_mode(msg)
+        if w.rules:
+            w.rules.restrict()
         if msg.get("fl"):
             w.apply_flags(msg["fl"])
         me = w.players.get(self.pid)
         if me and "me" in msg:
             me.credits, me.tanks, me.weapons, me.earned = msg["me"][:4]
             me.temp = msg["me"][4] if len(msg["me"]) > 4 else []
+            if len(msg["me"]) > 5:
+                me.upgrades = msg["me"][5]
         for row in msg["tk"]:
             t = w.players.get(row[0])
             if t is None:
@@ -576,6 +580,8 @@ class RemoteSession:
                 t.out, t.respawns = row[15] < 0, max(0, row[15])
             if len(row) > 16:
                 t.points = row[16]
+            if len(row) > 17:
+                t.max_hp = row[17]                    # includes any armour upgrade
             if t.pid == self.pid:
                 self._reconcile(t, row, msg.get("ack", 0.0))
 

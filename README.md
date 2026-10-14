@@ -82,10 +82,13 @@ Pick the game type on the battle setup screen (single player or when hosting).
 - **Escort the Convoy** - Blue escorts a slow supply truck from its base to the enemy's while Red tries to
   destroy it; then the sides swap. A truck that arrives beats one that was destroyed; if both arrive the
   faster run wins, and if neither does the one that got further wins. The battle's time limit is not used.
-- **Juggernaut** - one tank becomes the Juggernaut: a Goliath with Death Shells and a Heavy Gatling on loan
-  that takes only 40 % damage, hunted by everyone else. Whoever destroys it becomes the next one. You score
-  1 point per kill as the Juggernaut and 3 for bringing it down; first to the points target wins. The loaned
-  tank and ammunition are never added to your garage.
+- **Juggernaut** - everyone drives a Basic Tank with Basic Shells and Tracer, whatever they own, and hunts
+  one tank that has been made the Juggernaut: a Goliath with Death Shells and a Heavy Gatling that takes only
+  40 % damage. Whoever destroys it becomes the next one, and each new Juggernaut starts a new round:
+  everyone is sent back, the Juggernaut to the east end of the map and the hunters to the west end. You score 1 point per kill as the Juggernaut and 3
+  for bringing it down; first to the points target wins. There is no enemy team - all AI tanks are fellow
+  hunters (or the Juggernaut). You can still shop, but purchases only count in other battles, and the loaned
+  Goliath is never added to your garage.
 - **Survival** - every human and allied AI tank on one side against waves of AI tanks. Each wave is one tank
   bigger than the last and the tanks get better every few waves. Destroyed defenders come back when the wave
   is cleared, and there are twelve seconds to shop (`B`) before the next one. Clearing a wave pays everyone
@@ -111,6 +114,23 @@ Pick the game type on the battle setup screen (single player or when hosting).
 - Destroyed tanks respawn after four seconds with a short spawn shield.
 - Fire from the Combust Shell and fallout from the Nuke Shell hurt *everyone* in the area, including you.
 - Trees hide whatever is under them. Rivers can only be crossed at bridges and fords (fords slow you down).
+
+### Upgrades
+
+Every tank you own can be upgraded in the garage (or the in-battle shop), separately from your other tanks,
+up to five levels in each of:
+
+| Upgrade | Each level |
+| --- | --- |
+| Engine | +6 % top speed and turning |
+| Armour | +10 % strength (hit points) |
+| Loader | -8 % reload time, for cannons and machine guns |
+
+Levels cost more the higher they go and the bigger the tank: level *n* costs *n* x (40 + 15 % of the tank's
+price), rounded to 10 - so a Basic Tank's levels cost 40, 80, 120, 160, 200 and a Goliath's 160 ... 800.
+Upgrades bought mid-battle apply at once. They are switched off in Juggernaut, where tanks are assigned. AI
+tanks buy upgrades too when they can afford them. The numbers are `UPGRADES` and `upgrade_cost` in
+[ut/data.py](ut/data.py).
 
 ### The AI keeps pace with you
 
@@ -171,25 +191,25 @@ multi-barrel tanks alternate barrels and fire a little faster.
 | --- | --- | --- | --- | --- |
 | Basic Shell | 5 | 4 s | free | |
 | Tracer | 3 | none | free | accurate, long reach |
-| Gatling | 6 | none | 20 | fast, loose, short range |
-| Heavy Shell | 10 | 4 s | 40 | |
-| Combust Shell | 11 | 3 s | 80 | leaves fire for 10 s |
-| Heavy Tracer | 6 | none | 70 | |
-| Heavy Gatling | 10 | none | 100 | |
-| Canister | 10 | 4 s | 50 | 5 shells at once in a fan |
-| Death Shell | 15 | 5 s | 130 | |
-| Nuke Shell | 20 | 6 s | 200 | huge blast, leaves fallout |
+| Gatling | 6 | none | 80 | fast, loose, short range |
+| Heavy Shell | 10 | 4 s | 160 | |
+| Combust Shell | 11 | 3 s | 320 | leaves fire for 10 s |
+| Heavy Tracer | 6 | none | 280 | |
+| Heavy Gatling | 10 | none | 400 | |
+| Canister | 10 | 4 s | 200 | 5 shells at once in a fan |
+| Death Shell | 15 | 5 s | 520 | |
+| Nuke Shell | 20 | 6 s | 800 | huge blast, leaves fallout |
 
 | Tank | Cost | Speed | Strength | Shells per shot |
 | --- | --- | --- | --- | --- |
 | Basic | free | 12 | 5 | 1 |
-| Medium | 60 | 10 | 8 | 1 |
-| Heavy | 100 | 8 | 12 | 2 |
-| Mammoth | 150 | 6 | 16 | 2 |
-| Goliath | 200 | 6 | 20 | 3 |
-| Speed | 60 | 20 | 4 | 1 |
+| Medium | 240 | 10 | 8 | 1 |
+| Heavy | 400 | 8 | 12 | 2 |
+| Mammoth | 600 | 6 | 16 | 2 |
+| Goliath | 800 | 6 | 20 | 3 |
+| Speed | 240 | 20 | 4 | 1 |
 
-All of these numbers, plus rewards, ranges and blast sizes, live in [ut/data.py](ut/data.py).
+Prices are four times the original design (`PRICE_SCALE`). All of these numbers, plus rewards, ranges and blast sizes, live in [ut/data.py](ut/data.py).
 
 ## Project layout
 

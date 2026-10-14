@@ -37,10 +37,12 @@ MODE_INFO = dict(
               limit=None, win="destroy the enemy headquarters"),
     escort=dict(desc="Escort your supply truck across the map, then stop theirs. The longer run wins.",
                 limit=None, win="get your convoy further than theirs"),
-    jugg=dict(desc="One tank is an armoured Goliath hunted by all. Destroy it to become the Juggernaut.",
-              limit=("kills", "Points to win", 5, 150, 5)),
+    jugg=dict(desc="Everyone drives a Basic Tank and hunts one armoured Goliath. Destroy it to become it.",
+              limit=("kills", "Points to win", 5, 150, 5), no_enemies=True,
+              enemy_text="none - everyone hunts the Juggernaut"),
     survival=dict(desc="Everyone together against waves of AI tanks that keep getting tougher.",
-                  limit=None, win="survive as many waves as you can", no_enemies=True),
+                  limit=None, win="survive as many waves as you can", no_enemies=True,
+                  enemy_text="waves that grow as you go"),
     vip=dict(desc="Each team has one marked tank. Destroy the enemy VIP to score.",
              limit=("caps", "VIP kills to win", 1, 10, 1)),
 )
@@ -61,8 +63,12 @@ DISCOVERY_PORT = 27878       # UDP: how the Join screen finds games on the local
 SHELL, AUTO = 0, 1          # weapon slots: left mouse fires the cannon, right mouse the machine gun
 
 
+PRICE_SCALE = 4             # every tank and weapon price below is multiplied by this
+
+
 def _w(key, name, damage, reload, cost, slot, speed, rng, **kw):
-    d = dict(key=key, name=name, damage=damage, reload=reload, cost=cost, slot=slot, speed=speed, range=rng,
+    d = dict(key=key, name=name, damage=damage, reload=reload, cost=cost * PRICE_SCALE, slot=slot, speed=speed,
+             range=rng,
              rate=0.0, spread=0.0, pellets=1, hit=float(damage), splash=0, splash_frac=0.0, zone=None,
              hurts_all=False, glow=None, size=1.0, shake=0.0, desc="")
     d.update(kw)
@@ -103,7 +109,7 @@ WEAPON_INDEX = {w["key"]: i for i, w in enumerate(WEAPONS)}
 def _t(key, name, cost, speed, strength, weapons, radius, turn, traverse, reward, desc):
     # Every tank can carry every weapon. (The `weapons` argument is each tank's original restricted list,
     # kept here in case restrictions are ever wanted again: use `weapons=weapons` below.)
-    return dict(key=key, name=name, cost=cost, speed=speed, strength=strength,
+    return dict(key=key, name=name, cost=cost * PRICE_SCALE, speed=speed, strength=strength,
                 weapons=list(range(len(WEAPONS))), radius=radius,
                 turn=turn, traverse=traverse, reward=reward, desc=desc,
                 crush_trees=strength >= TREE_CRUSH_STRENGTH)
@@ -184,6 +190,38 @@ def ai_lineup(tier, count):
     for key, q in sorted(exact, key=lambda kq: -(kq[1] - int(kq[1])))[:left]:
         out[key] += 1
     return [key for key, _pct in mix for _ in range(out[key])]
+
+
+# --- tank upgrades --------------------------------------------------------------------------------
+# Each tank can be upgraded separately, up to UPGRADE_MAX levels per kind. (key, name, effect per level)
+UPGRADES = [("speed", "Engine", 0.06), ("armor", "Armour", 0.10), ("reload", "Loader", 0.08)]
+UPGRADE_MAX = 5
+
+
+def upgrade_cost(tank_key, level):
+    """Price of upgrade level `level` (1..UPGRADE_MAX) on a tank: dearer for bigger tanks and higher levels."""
+    base = 40 + 0.15 * TANKS[TANK_INDEX[tank_key]]["cost"]
+    return int(round(base * level / 10.0)) * 10
+
+
+def upgrade_text(kind, level):
+    pct = int(round(UPGRADES[kind][2] * level * 100))
+    return ("+%d%% speed" % pct, "+%d%% strength" % pct, "-%d%% reload time" % pct)[kind]
+
+
+def clean_upgrades(raw):
+    """{tank key: [engine, armour, loader]} with every level a valid integer."""
+    out = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            if k in TANK_INDEX and isinstance(v, (list, tuple)) and len(v) == len(UPGRADES):
+                try:
+                    lv = [max(0, min(UPGRADE_MAX, int(x))) for x in v]
+                except (TypeError, ValueError):
+                    continue
+                if any(lv):
+                    out[k] = lv
+    return out
 
 
 def tank_hp(t):

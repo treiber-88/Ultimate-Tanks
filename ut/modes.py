@@ -29,6 +29,9 @@ class Rules:
     def after_load(self):
         """Rebuild anything not stored in world.ms after a saved battle is loaded."""
 
+    def restrict(self):
+        """Apply any limits on what players may drive and fire (Tank.allow). Also run on client mirrors."""
+
     def assign_team(self, team, pid, is_ai):
         return team
 
@@ -407,13 +410,30 @@ class Escort(Rules):
 # ---------------------------------------------------------------------------------------------
 class Juggernaut(Rules):
     """One tank is the Juggernaut: an armoured Goliath hunted by everyone else. Whoever destroys it
-    becomes the next one. Points: 1 per kill as the Juggernaut, 3 for bringing it down."""
+    becomes the next one, and every new Juggernaut starts a new round: the field is cleared, the Juggernaut
+    starts at the east end of the map and the hunters at the west end.
+    Points: 1 per kill as the Juggernaut, 3 for bringing it down."""
     individual = True
     ARMOR = 0.4
     KIT = ("death_shell", "heavy_gatling")
+    # Whatever anyone owns, hunters get exactly this, so the hunt is even; the Juggernaut gets the Goliath kit.
+    HUNTER = (("basic",), ("basic_shell", "tracer"))
+    BOSS = (("goliath",), ("death_shell", "heavy_gatling"))
+
+    def restrict(self):
+        j = self.w.ms["jugg"]
+        for t in self.w.players.values():
+            want = self.BOSS if t.pid == j else self.HUNTER
+            if t.allow is not want:
+                t.allow = want
+                # always re-fit: this also strips upgrade bonuses (strength) from a tank already in use
+                frac = t.hp / t.max_hp if t.max_hp else 1.0
+                t.set_tank(t.tank_key if t.tank_key in want[0] else want[0][0])
+                if t.alive:
+                    t.hp = t.max_hp * frac
 
     def setup(self):
-        self.w.ms.update(jugg=-1)
+        self.w.ms.update(jugg=-1, round=0, fresh=False)
 
     def assign_team(self, team, pid, is_ai):
         return 0
@@ -426,6 +446,13 @@ class Juggernaut(Rules):
         if w.ms["jugg"] not in w.players and w.players:
             alive = [t for t in w.players.values() if t.alive] or list(w.players.values())
             self._crown(w.rng.choice(alive))
+        self.restrict()
+        if w.ms["fresh"]:
+            # new Juggernaut, new round. (Done here rather than inside the kill, which happens while
+            # projectiles are still being processed.) Teams decide the spawn ends: hunters (team 0) start in
+            # the west spawn area, the Juggernaut (team 1) in the east one, the full width of the map apart.
+            w.ms["fresh"] = False
+            w.reset_round()
 
     def _crown(self, t):
         w = self.w
@@ -434,7 +461,6 @@ class Juggernaut(Rules):
             self._uncrown(old)
         w.ms["jugg"] = t.pid
         t.team = 1
-        t.own_tank = t.tank_key
         t.temp = []
         if "goliath" not in t.tanks:
             t.tanks.append("goliath")
@@ -443,12 +469,11 @@ class Juggernaut(Rules):
             if k not in t.weapons:
                 t.weapons.append(k)
                 t.temp.append(["weapon", k])
+        t.allow = self.BOSS
         t.set_tank("goliath")
-        if t.alive:
-            t.hp = t.max_hp
-            t.shield = 1.5
-            w.events.append(("swap", t.pid, t.x, t.y))
-        w.note("%s is the Juggernaut!" % t.name, -1, t.pid)
+        w.ms["round"] += 1
+        w.ms["fresh"] = True
+        w.note("Round %d: %s is the Juggernaut!" % (w.ms["round"], t.name), -1, t.pid)
 
     def _uncrown(self, t):
         t.team = 0
@@ -457,13 +482,14 @@ class Juggernaut(Rules):
             if key in lst:
                 lst.remove(key)
         t.temp = []
-        t.set_tank(t.own_tank)
+        t.allow = self.HUNTER
+        t.set_tank("basic")
 
     def damage_scale(self, t):
         return self.ARMOR if t.pid == self.w.ms["jugg"] else 1.0
 
     def can_swap(self, t):
-        return t.pid != self.w.ms["jugg"]
+        return False                    # tanks are assigned in this game type
 
     def on_kill(self, victim, killer):
         w = self.w
@@ -493,7 +519,8 @@ class Juggernaut(Rules):
         w = self.w
         j = w.players.get(w.ms["jugg"])
         rival = max([t.points for t in w.players.values() if t is not me] or [0])
-        return str(me.points if me else 0), str(rival), "you / best rival - first to %d points" % self.limit("kill_limit", 20)
+        return (str(me.points if me else 0), str(rival),
+                "round %d - you / best rival - first to %d points" % (w.ms["round"], self.limit("kill_limit", 20)))
 
     def hints(self, me):
         w = self.w
@@ -501,6 +528,9 @@ class Juggernaut(Rules):
         if j is me:
             return [("You are the Juggernaut - destroy them all!", GOLD)]
         return [("Hunt the Juggernaut: %s" % j.name, PLAIN)] if j else []
+
+    def ai_goal(self, ai, t, alive, target):
+        return None
 
 
 # ---------------------------------------------------------------------------------------------

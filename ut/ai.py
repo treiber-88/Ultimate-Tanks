@@ -366,12 +366,18 @@ class AIController:
                 wp = WEAPONS[i]
                 if wp["key"] not in t.weapons and wp["cost"] <= t.credits:
                     options.append((wp["cost"], "weapon", wp["key"]))
+            for kind_i in range(len(data.UPGRADES)):        # upgrades for the tank we drive
+                lv = t.upgrades.get(t.tank_key, [0, 0, 0])[kind_i]
+                if lv < data.UPGRADE_MAX and data.upgrade_cost(t.tank_key, lv + 1) <= t.credits:
+                    options.append((data.upgrade_cost(t.tank_key, lv + 1) * 0.8, "upgrade",
+                                    "%s:%d" % (t.tank_key, kind_i)))
             if not options:
                 break
             options.sort(reverse=True)
             value, kind, key = options[0]
             # greedy drivers skip small purchases while a much bigger one is nearly in reach
-            if b.greed > 0.6 and value < 60 and t.credits > 45 and len(options) == 1:
+            small = 15 * data.PRICE_SCALE
+            if b.greed > 0.6 and value < small and t.credits > small * 0.75 and len(options) == 1:
                 break
             self.world.buy(t.pid, kind, key)
         # choose the tank: the most valuable one we can arm (scouts sometimes take the Speed Tank)
@@ -386,7 +392,7 @@ def make_ai_loadout(rng, team, index, skill, used_names, tank="basic"):
     name = rng.choice(names)
     used_names.add(name)
     colors = data.AI_COLORS[team]
-    credits = (0, rng.choice((0, 0, 20, 40)), rng.choice((40, 60, 100, 140)))[skill]
+    credits = (0, rng.choice((0, 0, 20, 40)), rng.choice((40, 60, 100, 140)))[skill] * data.PRICE_SCALE
     tanks = ["basic"] if tank == "basic" else ["basic", tank]
     return dict(name=name, color=list(colors[index % len(colors)]), credits=credits, tanks=tanks,
                 weapons=["basic_shell", "tracer"] + data.AI_KIT.get(tank, []), tank=tank)

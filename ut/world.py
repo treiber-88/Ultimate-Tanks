@@ -67,6 +67,8 @@ class Tank:
         self.points = 0            # personal score in the individually scored game types
         self.temp = []             # [kind, key] items lent by the game type (the Juggernaut's Goliath): never saved
         self.own_tank = loadout.get("tank", "basic")
+        self.allow = None          # (tank keys, weapon keys) the game type limits this tank to, or None
+        self.upgrades = data.clean_upgrades(loadout.get("upgrades"))
         self.out = False           # Capture the Flag: destroyed with no respawns left
         # inputs
         self.throttle = 0.0
@@ -79,16 +81,32 @@ class Tank:
         self.set_tank(loadout.get("tank", "basic"))
 
     # -- loadout ---------------------------------------------------------------
+    def up(self, kind):
+        """Upgrade level of the tank being driven (0 when the game type assigns tanks)."""
+        if self.allow:
+            return 0
+        lv = self.upgrades.get(self.tank_key)
+        return lv[kind] if lv else 0
+
+    def usable(self, slot=None, key=None):
+        """Weapons this player can fire right now: owned, and permitted by the game type."""
+        opts = data.usable(key or self.tank_key, self.weapons, slot)
+        if self.allow:
+            opts = [i for i in opts if WEAPONS[i]["key"] in self.allow[1]]
+        return opts
+
     def set_tank(self, key):
+        if self.allow and key not in self.allow[0]:
+            key = self.allow[0][0]
         if key not in self.tanks or not data.usable(key, self.weapons):
             key = "basic"
         self.tank_key = key
         self.spec = TANKS[TANK_INDEX[key]]
         self.art = TANK_ART[key]
-        self.max_hp = data.tank_hp(self.spec)
+        self.max_hp = data.tank_hp(self.spec) * (1 + data.UPGRADES[1][2] * self.up(1))
         self.radius = self.spec["radius"]
         for slot in (SHELL, AUTO):
-            opts = data.usable(key, self.weapons, slot)
+            opts = self.usable(slot, key)
             if self.sel[slot] not in opts:
                 self.sel[slot] = max(opts, key=lambda i: WEAPONS[i]["damage"]) if opts else -1
 
@@ -97,9 +115,11 @@ class Tank:
         lent_t = [k for kind, k in self.temp if kind == "tank"]
         lent_w = [k for kind, k in self.temp if kind == "weapon"]
         tanks = [k for k in self.tanks if k not in lent_t]
-        tank = self.tank_key if self.tank_key in tanks else (self.own_tank if self.own_tank in tanks else "basic")
+        # while the game type dictates the tank, remember the one the player had chosen for themselves
+        tank = self.tank_key if (self.tank_key in tanks and not self.allow) else             (self.own_tank if self.own_tank in tanks else "basic")
         return dict(name=self.name, color=list(self.color), credits=self.credits, tanks=tanks,
-                    weapons=[k for k in self.weapons if k not in lent_w], tank=tank)
+                    weapons=[k for k in self.weapons if k not in lent_w], tank=tank,
+                    upgrades={k: list(v) for k, v in self.upgrades.items()})
 
     def pivot(self):
         tx = self.art["turret_x"] * PPM
@@ -180,6 +200,26 @@ class World:
                 t.credits -= cost
                 t.tanks.append(key)
                 return True
+        if kind == "upgrade":
+            tank_key, _, which = str(key).partition(":")
+            if tank_key not in t.tanks or which not in ("0", "1", "2"):
+                return False
+            k = int(which)
+            lv = list(t.upgrades.get(tank_key, [0] * len(data.UPGRADES)))
+            if lv[k] >= data.UPGRADE_MAX:
+                return False
+            cost = data.upgrade_cost(tank_key, lv[k] + 1)
+            if t.credits < cost:
+                return False
+            t.credits -= cost
+            lv[k] += 1
+            t.upgrades[tank_key] = lv
+            if tank_key == t.tank_key:                 # takes effect at once on the tank in use
+                frac = t.hp / t.max_hp if t.max_hp else 1.0
+                t.max_hp = data.tank_hp(t.spec) * (1 + data.UPGRADES[1][2] * t.up(1))
+                if t.alive:
+                    t.hp = t.max_hp * frac
+            return True
         if kind == "weapon" and key in WEAPON_INDEX and key not in t.weapons:
             cost = WEAPONS[WEAPON_INDEX[key]]["cost"]
             if t.credits >= cost:
@@ -210,7 +250,7 @@ class World:
 
     def select_weapon(self, pid, slot, idx):
         t = self.players.get(pid)
-        if t and idx in data.usable(t.tank_key, t.weapons, slot):
+        if t and idx in t.usable(slot):
             t.sel[slot] = idx
             return True
         return False
@@ -293,7 +333,8 @@ class World:
 
     def _move(self, t, dt):
         spec = t.spec
-        vmax = data.tank_speed(spec)
+        engine = 1 + data.UPGRADES[0][2] * t.up(0)
+        vmax = data.tank_speed(spec) * engine
         if self.map.shallow_at(t.x, t.y):
             vmax *= 0.55
         if t.flag >= 0:
@@ -305,7 +346,7 @@ class World:
             t.speed = min(target, t.speed + rate)
         else:
             t.speed = max(target, t.speed - rate)
-        t.angle = (t.angle + max(-1.0, min(1.0, t.turn)) * math.radians(spec["turn"]) * dt) % TAU
+        t.angle = (t.angle + max(-1.0, min(1.0, t.turn)) * math.radians(spec["turn"]) * engine * dt) % TAU
         t.turret = turn_toward(t.turret, t.aim, math.radians(spec["traverse"]) * dt) % TAU
         if t.speed:
             dx = math.cos(t.angle) * t.speed * dt
@@ -401,9 +442,10 @@ class World:
 
     # -- weapons ------------------------------------------------------------------------
     def reload_time(self, t, w):
+        loader = 1 - data.UPGRADES[2][2] * t.up(2)
         if w["slot"] == AUTO:
-            return 1.0 / (w["rate"] * (1 + 0.35 * (len(t.art["muzzles"]) - 1)))
-        return w["reload"]              # cannons fire every barrel at once instead of reloading faster
+            return loader / (w["rate"] * (1 + 0.35 * (len(t.art["muzzles"]) - 1)))
+        return w["reload"] * loader     # cannons fire every barrel at once instead of reloading faster
 
     def _shoot(self, t, dt):
         if t.lockout > 0:
@@ -774,7 +816,7 @@ class World:
             tk.append([t.pid, 1 if t.alive else 0, round(t.x, 1), round(t.y, 1), round(t.angle, 3),
                        round(t.turret, 3), round(t.hp, 1), TANK_INDEX[t.tank_key], 1 if t.shield > 0 else 0,
                        t.sel[0], t.sel[1], round(max(0.0, t.respawn), 1), t.kills, t.deaths,
-                       round(t.speed, 0), -1 if t.out else t.respawns, t.points])
+                       round(t.speed, 0), -1 if t.out else t.respawns, t.points, round(t.max_hp, 1)])
         zn = [[z[0], z[1], round(z[2]), round(z[3]), z[4], round(z[5], 1)] for z in self.zones]
         fl = [[f[0], round(f[1]), round(f[2]), f[3], round(f[4], 1)] for f in self.flags]
         cp = [[c[2], c[3], round(c[4], 2)] for c in self.cps]
@@ -862,7 +904,7 @@ class World:
             t.x, t.y, t.angle, t.turret, t.hp = p["x"], p["y"], p["angle"], p["turret"], p["hp"]
             t.aim = t.turret
             for slot in (0, 1):
-                if p["sel"][slot] in data.usable(t.tank_key, t.weapons, slot):
+                if p["sel"][slot] in t.usable(slot):
                     t.sel[slot] = p["sel"][slot]
         if w.flags:
             w.apply_flags(w.flags)
@@ -872,4 +914,5 @@ class World:
             w.ms = d["ms"]
         if w.rules:
             w.rules.after_load()
+            w.rules.restrict()
         return w

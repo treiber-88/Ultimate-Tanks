@@ -50,17 +50,17 @@ frames(2)
 click(gx + 100, 30 + 96 + 124 + 40)                 # select Medium Tank in the list
 click(gx + 460 + 200, 30 + 860 - 70)                # Buy
 assert "medium" not in p.tanks, "bought a tank with no money"
-p.credits = 200
+p.credits = 800
 click(gx + 460 + 200, 30 + 860 - 70)
-assert "medium" in p.tanks and p.credits == 140, (p.tanks, p.credits)
+assert "medium" in p.tanks and p.credits == 560, (p.tanks, p.credits)
 click(gx + 460 + 200, 30 + 860 - 70)                # Use this tank
 assert p.tank == "medium"
 click(gx + 1060 + 600, 30 + 84 + 76 * 3 + 30)       # buy Heavy Shell (40)
-assert "heavy_shell" in p.weapons and p.credits == 100, (p.weapons, p.credits)
+assert "heavy_shell" in p.weapons and p.credits == 400, (p.weapons, p.credits)
 click(gx + 100, 30 + 96 + 124 * 3 + 40)             # Mammoth: buy, but no usable ammo yet
 click(gx + 460 + 200, 30 + 860 - 70)
-assert "mammoth" not in p.tanks                      # 150 > 100
-p.credits = 150
+assert "mammoth" not in p.tanks                      # 600 > 400
+p.credits = 600
 click(gx + 460 + 200, 30 + 860 - 70)
 assert "mammoth" in p.tanks
 click(gx + 460 + 200, 30 + 860 - 70)                # any tank can carry any weapon, so this just works
@@ -106,6 +106,7 @@ server = net.Server(27993)
 hw, hp = screens.build_world(app, dict(map="valley", seed=9, kill_limit=0, time_limit=0, difficulty=2), 5, 6)
 host = net.LocalSession(hw, hp[0], server, {})
 conn, inbox = net.connect("127.0.0.1", 27993)
+p.credits = 200                                     # enough for a Gatling (80) at the new prices
 conn.send({"t": "join", "lo": p.loadout()})
 start = None
 while start is None:

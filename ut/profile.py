@@ -22,6 +22,7 @@ class Profile:
         self.tanks = ["basic"]
         self.weapons = ["basic_shell", "tracer"]
         self.tank = "basic"
+        self.upgrades = {}           # tank key -> [engine, armour, loader] levels
         self.kills = 0
         self.deaths = 0
         self.battles = 0
@@ -82,6 +83,7 @@ class Profile:
         return p
 
     def validate(self):
+        self.upgrades = data.clean_upgrades(self.upgrades)
         self.tanks = [t for t in self.tanks if t in data.TANK_INDEX] or ["basic"]
         self.weapons = [w for w in self.weapons if w in data.WEAPON_INDEX]
         for w in ("basic_shell", "tracer"):
@@ -114,10 +116,26 @@ class Profile:
         self.weapons.append(key)
         return True
 
+    def buy_upgrade(self, tank_key, kind):
+        if tank_key not in self.tanks:
+            return False
+        lv = self.upgrades.get(tank_key, [0] * len(data.UPGRADES))
+        if lv[kind] >= data.UPGRADE_MAX:
+            return False
+        cost = data.upgrade_cost(tank_key, lv[kind] + 1)
+        if self.credits < cost:
+            return False
+        self.credits -= cost
+        lv = list(lv)
+        lv[kind] += 1
+        self.upgrades[tank_key] = lv
+        return True
+
     def loadout(self):
         """What a battle needs to know about this player."""
         return dict(name=self.name, color=list(self.color), credits=self.credits, tanks=list(self.tanks),
-                    weapons=list(self.weapons), tank=self.tank)
+                    weapons=list(self.weapons), tank=self.tank,
+                    upgrades={k: list(v) for k, v in self.upgrades.items()})
 
     def absorb(self, state):
         """Copy battle results (credits, purchases) back into the profile."""
@@ -125,6 +143,8 @@ class Profile:
         self.tanks = list(state["tanks"])
         self.weapons = list(state["weapons"])
         self.tank = state["tank"]
+        if "upgrades" in state:
+            self.upgrades = {k: list(v) for k, v in state["upgrades"].items()}
         self.validate()
 
     # -- saved battle ----------------------------------------------------------
