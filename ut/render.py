@@ -32,11 +32,19 @@ def sample(field, px0, py0, n=CH):
 class Ground:
     """The terrain, composited on demand into cached chunks from the tileable Blender textures."""
 
-    def __init__(self, assets, gmap, cache=420):
+    def __init__(self, assets, gmap, cache=420, zoom=1.0):
         self.t = assets.terrain
         self.map = gmap
         self.cache = OrderedDict()
         self.cap = cache
+        self.set_zoom(zoom)
+
+    def set_zoom(self, zoom):
+        """Chunks are kept at the on-screen scale, so changing zoom starts the cache afresh."""
+        self.z = zoom
+        self.chz = int(round(CH * zoom))
+        self.cache.clear()
+        self._decals = {}
 
     def chunk(self, cx, cy):
         k = (cx, cy)
@@ -54,14 +62,29 @@ class Ground:
         return (cx, cy) in self.cache
 
     def stamp(self, surf, x, y):
-        """Paint a decal (centred on world x, y) permanently into whichever cached chunks it touches."""
+        """Paint a decal (a world-scale image centred on world x, y) permanently into the cached chunks it touches."""
+        z, C = self.z, self.chz
+        if z != 1.0:
+            k = id(surf)
+            s = self._decals.get(k)
+            if s is None:
+                w0, h0 = surf.get_size()
+                s = pygame.transform.smoothscale(surf, (max(1, int(w0 * z)), max(1, int(h0 * z))))
+                if surf.get_alpha() is not None:
+                    s.set_alpha(surf.get_alpha())
+                if len(self._decals) > 300:
+                    self._decals.clear()
+                self._decals[k] = (surf, s)          # keep the source alive so its id stays unique
+            else:
+                s = s[1]
+            surf = s
         w, h = surf.get_size()
-        left, top = int(x - w / 2), int(y - h / 2)
-        for cy in range(top // CH, (top + h) // CH + 1):
-            for cx in range(left // CH, (left + w) // CH + 1):
+        left, top = int(x * z - w / 2), int(y * z - h / 2)
+        for cy in range(top // C, (top + h) // C + 1):
+            for cx in range(left // C, (left + w) // C + 1):
                 c = self.cache.get((cx, cy))
                 if c is not None:
-                    c.blit(surf, (left - cx * CH, top - cy * CH))
+                    c.blit(surf, (left - cx * C, top - cy * C))
 
     def _build(self, cx, cy):
         m = self.map
@@ -100,7 +123,10 @@ class Ground:
         arr = np.clip(out, 0, 255).astype(np.uint8)
         # No alpha channel, whatever the window has: a plain convert() keeps one on macOS, and decals
         # stamped into such a chunk zero it, which leaves boxes that glows and flashes cannot light.
-        return pygame.surfarray.make_surface(arr.swapaxes(0, 1)).convert((0xFF0000, 0xFF00, 0xFF, 0))
+        surf = pygame.surfarray.make_surface(arr.swapaxes(0, 1))
+        if self.chz != CH:
+            surf = pygame.transform.smoothscale(surf, (self.chz, self.chz))
+        return surf.convert((0xFF0000, 0xFF00, 0xFF, 0))
 
     def minimap(self, w, h):
         m = self.map
@@ -133,14 +159,16 @@ class Ground:
 class BattleView:
     BUCKET = 512
 
-    def __init__(self, app, world, local_pid):
+    def __init__(self, app, world, local_pid, zoom=1.0):
         self.app = app
         self.a = app.assets
+        self.z = zoom
+        self._zs = {}
         self.snd = app.sound
         self.world = world
         self.local = local_pid
         self.map = world.map
-        self.ground = Ground(self.a, self.map)
+        self.ground = Ground(self.a, self.map, zoom=zoom)
         self.rng = random.Random(3)
         self.cam = [0.0, 0.0]
         self.focus = None
@@ -179,10 +207,35 @@ class BattleView:
                     self.buckets.setdefault((bx, by), []).append(i)
         self._faded = {}
 
+    # -- zoom ---------------------------------------------------------------------
+    def set_zoom(self, zoom):
+        if zoom == self.z:
+            return
+        self.z = zoom
+        self.ground.set_zoom(zoom)
+        for cache in (self._zs, self._rot, self._fx, self._ammo_rot, self._faded):
+            cache.clear()
+
+    def zs(self, surf):
+        """A sprite at the current zoom (scaled once, then cached)."""
+        if self.z == 1.0:
+            return surf
+        e = self._zs.get(id(surf))
+        if e is None:
+            w, h = surf.get_size()
+            e = (surf, pygame.transform.smoothscale(surf, (max(1, int(round(w * self.z))),
+                                                           max(1, int(round(h * self.z))))))
+            self._zs[id(surf)] = e
+        return e[1]
+
+    def view_size(self, screen_size):
+        """How much of the world (in world pixels) fits on a screen of this size."""
+        return screen_size[0] / self.z, screen_size[1] / self.z
+
     # -- small caches -------------------------------------------------------------
     def fx_sprite(self, name, size, tint=None, add=False, level=255):
-        """Scaled (and optionally tinted / dimmed) effect sprite."""
-        size = max(6, int(size) // 6 * 6)
+        """Scaled (and optionally tinted / dimmed) effect sprite. `size` is in world pixels."""
+        size = max(6, int(size * self.z) // 6 * 6)
         level = level // 32 * 32 + 31 if add else 255
         k = (name, size, tint, add, level)
         s = self._fx.get(k)
@@ -217,7 +270,7 @@ class BattleView:
         k = (key, b)
         s = self._ammo_rot.get(k)
         if s is None:
-            s = pygame.transform.rotozoom(self.a.ammo[key], -b * 360.0 / 48, 1.0)
+            s = pygame.transform.rotozoom(self.zs(self.a.ammo[key]), -b * 360.0 / 48, 1.0)
             self._ammo_rot[k] = s
         return s
 
@@ -442,7 +495,8 @@ class BattleView:
     # -- update ---------------------------------------------------------------------------------
     def update(self, dt, screen_size, mouse):
         self.time += dt
-        sw, sh = screen_size
+        sw, sh = self.view_size(screen_size)
+        mouse = (mouse[0] / self.z, mouse[1] / self.z)
         t = self.world.players.get(self.local)
         watched = self.world.players.get(self.follow) if self.follow is not None else None
         if t and t.alive:
@@ -455,8 +509,8 @@ class BattleView:
         k = min(1.0, dt * 7.0)
         self.cam[0] += (tx - self.cam[0]) * k
         self.cam[1] += (ty - self.cam[1]) * k
-        self.cam[0] = max(0.0, min(self.map.w - sw, self.cam[0]))
-        self.cam[1] = max(0.0, min(self.map.h - sh, self.cam[1]))
+        self.cam[0] = max(0.0, min(max(0.0, self.map.w - sw), self.cam[0]))
+        self.cam[1] = max(0.0, min(max(0.0, self.map.h - sh), self.cam[1]))
         self.shake = max(0.0, self.shake - dt * 30.0)
         self.flash = max(0.0, self.flash - dt * 1.3)
 
@@ -544,7 +598,11 @@ class BattleView:
 
     # -- drawing -----------------------------------------------------------------------------------
     def draw(self, screen):
+        """Draw the world. The camera (`cam`) is in world pixels; everything is drawn at zoom `z`.
+        Returns the camera position actually used (it shakes)."""
         sw, sh = screen.get_size()
+        z = self.z
+        vw, vh = sw / z, sh / z                      # the visible piece of the world, in world pixels
         cx, cy = self.cam
         if self.shake > 0.3:
             cx += self.rng.uniform(-1, 1) * self.shake
@@ -552,107 +610,103 @@ class BattleView:
         cx, cy = int(cx), int(cy)
         a = self.a
         blit = screen.blit
+        zs = self.zs
+        ox, oy = cx * z, cy * z                      # world -> screen: (x * z - ox, y * z - oy)
+
+        def onscreen(x, y, margin):
+            return cx - margin < x < cx + vw + margin and cy - margin < y < cy + vh + margin
+
+        def put(surf, x, y, flags=0):
+            """Blit a zoom-scaled surface centred on a world point."""
+            blit(surf, (x * z - ox - surf.get_width() // 2, y * z - oy - surf.get_height() // 2), special_flags=flags)
+
+        def put_at(surf, wx, wy, ax, ay):
+            """Blit a world-scale sprite whose anchor (ax, ay) sits on world point (wx, wy)."""
+            blit(zs(surf), ((wx - ax) * z - ox, (wy - ay) * z - oy))
 
         # ground
-        gx0, gy0 = cx // CH, cy // CH
-        gx1, gy1 = (cx + sw) // CH, (cy + sh) // CH
+        C = self.ground.chz
+        gx0, gy0 = int(ox) // C, int(oy) // C
+        gx1, gy1 = int(ox + sw) // C, int(oy + sh) // C
         for gy in range(gy0, gy1 + 1):
             for gx in range(gx0, gx1 + 1):
-                blit(self.ground.chunk(gx, gy), (gx * CH - cx, gy * CH - cy))
+                blit(self.ground.chunk(gx, gy), (gx * C - ox, gy * C - oy))
         self._prewarm(gx0, gy0, gx1, gy1)
 
-        seen = self._visible_objects(cx, cy, sw, sh)
+        seen = self._visible_objects(cx, cy, int(vw) + 1, int(vh) + 1)
 
-        def visible(layer):
-            return seen[layer]
+        def scenery(layer):
+            for o in seen[layer]:
+                blit(zs(o[0]), (o[1] * z - ox, o[2] * z - oy))
 
-        for o in visible(LAYER_GROUND):
-            blit(o[0], (o[1] - cx, o[2] - cy))
-        for i, c in enumerate(self.world.cps):       # Zone Defense: ground markings in the owner's colour
+        scenery(LAYER_GROUND)
+        for i, c in enumerate(self.world.cps):       # zones: ground markings in the owner's colour
             zx, zy = c[0], c[1]
-            if cx - 200 < zx < cx + sw + 200 and cy - 200 < zy < cy + sh + 200:
-                art = a.zone_art["n" if c[2] < 0 else str(c[2])]
-                blit(art, (zx - cx - art.get_width() // 2, zy - cy - art.get_height() // 2))
+            if onscreen(zx, zy, 200):
+                put(zs(a.zone_art["n" if c[2] < 0 else str(c[2])]), zx, zy)
                 if c[3] >= 0:                        # being captured: a ring sweeps round as the clock runs
                     who = self.world.players.get(c[3])
-                    col = data.TEAM_UI[who.team] if who else (255, 255, 255)
-                    r = data.ZONE_RADIUS + 14
+                    col = data.TEAM_UI[who.team % 2] if who else (255, 255, 255)
+                    r = (data.ZONE_RADIUS + 14) * z
                     frac = min(1.0, c[4] / data.ZONE_CAPTURE_TIME)
-                    pygame.draw.arc(screen, col, (zx - cx - r, zy - cy - r, r * 2, r * 2), math.pi / 2 - TAU * frac,
-                                    math.pi / 2, 7)
+                    pygame.draw.arc(screen, col, (zx * z - ox - r, zy * z - oy - r, r * 2, r * 2),
+                                    math.pi / 2 - TAU * frac, math.pi / 2, max(3, int(7 * z)))
         flags = self.world.flags
         for team in range(len(flags)):               # Capture the Flag: the pads the flags stand on
             hx, hy = self.map.flag_homes[team]
-            if cx - 80 < hx < cx + sw + 80 and cy - 80 < hy < cy + sh + 80:
+            if onscreen(hx, hy, 80):
                 m = a.ctf_meta["base_%d" % team]
-                blit(a.ctf["base_%d" % team], (hx - cx - m["ax"], hy - cy - m["ay"]))
+                put_at(a.ctf["base_%d" % team], hx, hy, m["ax"], m["ay"])
 
         # wrecks (tread marks, scorches and craters are already painted into the ground)
         for key, x, y, ang, _t in self.wrecks:
-            if cx - 150 < x < cx + sw + 150 and cy - 150 < y < cy + sh + 150:
+            if onscreen(x, y, 150):
                 spr = a.tank(key, None)
                 k = int(round(ang / FRAME_STEP)) % 32
-                blit(spr.hull[k], (x - cx - spr.hf // 2, y - cy - spr.hf // 2))
+                put(zs(spr.hull[k]), x, y)
                 txo = a.tank_meta[key]["turret_x"] * PPM
-                k2 = (k + 5) % 32
-                blit(spr.turret[k2], (x + math.cos(ang) * txo - cx - spr.tf // 2 + 6,
-                                      y + math.sin(ang) * txo - cy - spr.tf // 2 + 4))
+                put(zs(spr.turret[(k + 5) % 32]), x + math.cos(ang) * txo + 6, y + math.sin(ang) * txo + 4)
 
-        # lingering zones on the ground
-        for z in self.world.zones:
-            _id, kind, x, y, rad, left = z[:6]
-            if cx - rad < x < cx + sw + rad and cy - rad < y < cy + sh + rad:
+        # lingering fire and fallout on the ground
+        for zn in self.world.zones:
+            _id, kind, x, y, rad, left = zn[:6]
+            if onscreen(x, y, rad):
                 lvl = int(110 * min(1.0, left / 2.0))
                 col = (255, 120, 30) if kind == "fire" else (90, 255, 60)
-                s = self.fx_sprite("glow_soft", rad * 2.6, col, True, lvl)
-                blit(s, (x - cx - s.get_width() // 2, y - cy - s.get_height() // 2), special_flags=ADD)
+                put(self.fx_sprite("glow_soft", rad * 2.6, col, True, lvl), x, y, ADD)
 
-        for o in visible(LAYER_LOW):
-            blit(o[0], (o[1] - cx, o[2] - cy))
+        scenery(LAYER_LOW)
 
         # tanks
-        tanks = [t for t in self.world.players.values()
-                 if t.alive and cx - 220 < t.x < cx + sw + 220 and cy - 220 < t.y < cy + sh + 220]
+        tanks = [t for t in self.world.players.values() if t.alive and onscreen(t.x, t.y, 220)]
         for s in self.world.structs:                 # the convoy truck drives among the tanks
-            if s[0] == "truck" and s[5] > 0 and cx - 200 < s[2] < cx + sw + 200 and cy - 200 < s[3] < cy + sh + 200:
+            if s[0] == "truck" and s[5] > 0 and onscreen(s[2], s[3], 200):
                 k = int(round(s[7] / FRAME_STEP)) % 32
-                sh_ = a.modes["truck_%d_shadow" % (s[1] % 2)][k]
-                blit(sh_, (s[2] - cx - sh_.get_width() // 2 + 7, s[3] - cy - sh_.get_height() // 2 + 9))
-                f = a.modes["truck_%d" % (s[1] % 2)][k]
-                blit(f, (s[2] - cx - f.get_width() // 2, s[3] - cy - f.get_height() // 2))
+                put(zs(a.modes["truck_%d_shadow" % (s[1] % 2)][k]), s[2] + 7, s[3] + 9)
+                put(zs(a.modes["truck_%d" % (s[1] % 2)][k]), s[2], s[3])
         marks = self.world.rules.marks() if self.world.rules else {}
         for t in tanks:
             if t.pid in marks:                       # VIP / Juggernaut: a gold ring on the ground
                 lvl = 150 + int(70 * math.sin(self.time * 5))
-                g = self.fx_sprite("ring", t.radius * 4.2, (255, 200, 60), True, lvl)
-                blit(g, (t.x - cx - g.get_width() // 2, t.y - cy - g.get_height() // 2), special_flags=ADD)
+                put(self.fx_sprite("ring", t.radius * 4.2, (255, 200, 60), True, lvl), t.x, t.y, ADD)
         for t in tanks:
             hs, _ts = a.tank_shadows(t.tank_key)
-            k = int(round(t.angle / FRAME_STEP)) % 32
-            f = hs[k]
-            blit(f, (t.x - cx - f.get_width() // 2 + 7, t.y - cy - f.get_height() // 2 + 9))
+            put(zs(hs[int(round(t.angle / FRAME_STEP)) % 32]), t.x + 7, t.y + 9)
         for t in tanks:
-            self._draw_tank(screen, t, cx, cy)
+            self._draw_tank(screen, t, ox, oy)
 
         # projectiles
         for p in self.world.projectiles.values():
-            x, y = p[4] - cx, p[5] - cy
-            if -60 < x < sw + 60 and -60 < y < sh + 60:
+            if onscreen(p[4], p[5], 60):
                 wp = WEAPONS[p[3]]
                 if wp["glow"]:
                     if wp["slot"] == AUTO:
-                        st = self._streak(wp, p[9])
-                        blit(st, (x - math.cos(p[9]) * 26 - st.get_width() // 2,
-                                  y - math.sin(p[9]) * 26 - st.get_height() // 2), special_flags=ADD)
+                        put(self._streak(wp, p[9]), p[4] - math.cos(p[9]) * 26, p[5] - math.sin(p[9]) * 26, ADD)
                     else:
-                        g = self.fx_sprite("glow", 66, wp["glow"], True)
-                        blit(g, (x - 33, y - 33), special_flags=ADD)
-                s = self.ammo_sprite(wp["key"], p[9])
-                blit(s, (x - s.get_width() // 2, y - s.get_height() // 2))
+                        put(self.fx_sprite("glow", 66, wp["glow"], True), p[4], p[5], ADD)
+                put(self.ammo_sprite(wp["key"], p[9]), p[4], p[5])
         for fx_, fy_, ang, age, life, scale in self.flashes:
-            s = self._muzzle(ang, scale)
-            blit(s, (fx_ - cx + math.cos(ang) * 30 * scale - s.get_width() // 2,
-                     fy_ - cy + math.sin(ang) * 30 * scale - s.get_height() // 2), special_flags=ADD)
+            put(self._muzzle(ang, scale), fx_ + math.cos(ang) * 30 * scale, fy_ + math.sin(ang) * 30 * scale, ADD)
 
         for team, f in enumerate(flags):             # flags stand above tanks, and ride on their carrier
             fx_, fy_ = f[1], f[2]
@@ -660,36 +714,31 @@ class BattleView:
                 c = self.world.players.get(f[3])
                 if c:
                     fx_, fy_ = c.x, c.y
-            if cx - 200 < fx_ < cx + sw + 200 and cy - 200 < fy_ < cy + sh + 200:
+            if onscreen(fx_, fy_, 200):
                 if f[0] == 2:                        # dropped: a pulsing ring so it is easy to spot
                     lvl = 120 + int(80 * math.sin(self.time * 6))
-                    g = self.fx_sprite("ring", 150, data.TEAM_UI[team], True, lvl)
-                    blit(g, (fx_ - cx - g.get_width() // 2, fy_ - cy - g.get_height() // 2), special_flags=ADD)
+                    put(self.fx_sprite("ring", 150, data.TEAM_UI[team], True, lvl), fx_, fy_, ADD)
                 m = a.ctf_meta["flag_%d" % team]
-                blit(a.ctf["flag_%d" % team], (fx_ - cx - m["ax"], fy_ - cy - m["ay"]))
+                put_at(a.ctf["flag_%d" % team], fx_, fy_, m["ax"], m["ay"])
 
         # scenery above tanks
-        for o in visible(LAYER_SOLID):
-            blit(o[0], (o[1] - cx, o[2] - cy))
+        scenery(LAYER_SOLID)
         for s in self.world.structs:                 # headquarters buildings
-            if s[0] == "hq" and cx - 300 < s[2] < cx + sw + 300 and cy - 300 < s[3] < cy + sh + 300:
+            if s[0] == "hq" and onscreen(s[2], s[3], 300):
                 name = "hq_%d" % (s[1] % 2) if s[5] > 0 else "hq_dead"
                 m = a.modes_meta[name]
-                blit(a.modes[name], (s[2] - cx - m["ax"], s[3] - cy - m["ay"]))
+                put_at(a.modes[name], s[2], s[3], m["ax"], m["ay"])
         me = self.world.players.get(self.local)
-        for o in visible(LAYER_CANOPY):
-            s = o[0]
+        for o in seen[LAYER_CANOPY]:
+            s = zs(o[0])
             if me and me.alive and abs(me.x - o[5]) < 120 and abs(me.y - o[6]) < 120:
                 s = self._fade(s)
-            blit(s, (o[1] - cx, o[2] - cy))
+            blit(s, (o[1] * z - ox, o[2] * z - oy))
 
         # particles
         for p in self.particles:
             age = p[5]
-            if age <= 0:
-                continue
-            x, y = p[1] - cx, p[2] - cy
-            if not (-160 < x < sw + 160 and -160 < y < sh + 160):
+            if age <= 0 or not onscreen(p[1], p[2], 160):
                 continue
             f = age / p[6]
             size = p[7] + (p[8] - p[7]) * f
@@ -697,15 +746,14 @@ class BattleView:
                 lvl = int(p[9] * (1.0 - f) ** 1.3)
                 if lvl < 24:
                     continue
-                s = self.fx_sprite(p[0], size, p[11], True, lvl)
-                blit(s, (x - s.get_width() // 2, y - s.get_height() // 2), special_flags=ADD)
+                put(self.fx_sprite(p[0], size, p[11], True, lvl), p[1], p[2], ADD)
             else:
                 al = int(p[9] * (1.0 - f) * min(1.0, f * 8))
                 if al < 8:
                     continue
                 s = self.fx_sprite(p[0], size, p[11])
                 s.set_alpha(al)
-                blit(s, (x - s.get_width() // 2, y - s.get_height() // 2))
+                put(s, p[1], p[2])
 
         if self.flash > 0.02:
             ov = pygame.Surface((sw, sh))
@@ -765,7 +813,8 @@ class BattleView:
         key = ("streak", wp["key"], b)
         s = self._ammo_rot.get(key)
         if s is None:
-            base = pygame.transform.smoothscale(self.a.fx_add["spark"], (int(86 * wp["size"]), int(30 * wp["size"])))
+            base = pygame.transform.smoothscale(self.a.fx_add["spark"], (int(86 * wp["size"] * self.z),
+                                                                          max(2, int(30 * wp["size"] * self.z))))
             base.fill(wp["glow"] + (255,), special_flags=pygame.BLEND_RGB_MULT)
             s = pygame.transform.rotozoom(base, -b * 360.0 / 48, 1.0)
             self._ammo_rot[key] = s
@@ -773,7 +822,7 @@ class BattleView:
 
     def _muzzle(self, ang, scale):
         b = int(round(ang / TAU * 32)) % 32
-        sz = max(24, int(120 * scale) // 8 * 8)
+        sz = max(16, int(120 * scale * self.z) // 8 * 8)
         key = ("mz", b, sz, self.rng.randrange(2))
         s = self._ammo_rot.get(key)
         if s is None:
@@ -782,26 +831,29 @@ class BattleView:
             self._ammo_rot[key] = s
         return s
 
-    def _draw_tank(self, screen, t, cx, cy):
+    def _draw_tank(self, screen, t, ox, oy):
+        """ox, oy: the camera's top-left in on-screen (zoomed) pixels."""
         a = self.a
+        z = self.z
+        zs = self.zs
         spr = a.tank(t.tank_key, t.color)
-        x, y = t.x - cx, t.y - cy
+        x, y = t.x * z - ox, t.y * z - oy
         k = int(round(t.angle / FRAME_STEP))
         resid = t.angle - k * FRAME_STEP
         k %= 32
-        hull = self.rotated(spr.hull[k], resid, (t.tank_key, t.color, 0, k))
+        hull = self.rotated(zs(spr.hull[k]), resid, (t.tank_key, t.color, 0, k))
         screen.blit(hull, (x - hull.get_width() // 2, y - hull.get_height() // 2))
-        txo = t.art["turret_x"] * PPM
-        rc = t.recoil * 5.0
+        txo = t.art["turret_x"] * PPM * z
+        rc = t.recoil * 5.0 * z
         px = x + math.cos(t.angle) * txo - math.cos(t.turret) * rc
         py = y + math.sin(t.angle) * txo - math.sin(t.turret) * rc
         k2 = int(round(t.turret / FRAME_STEP))
         resid2 = t.turret - k2 * FRAME_STEP
         k2 %= 32
         _hs, ts = a.tank_shadows(t.tank_key)
-        sh = ts[k2]
-        screen.blit(sh, (px - sh.get_width() // 2 + 4, py - sh.get_height() // 2 + 5))
-        tur = self.rotated(spr.turret[k2], resid2, (t.tank_key, t.color, 1, k2))
+        sh = zs(ts[k2])
+        screen.blit(sh, (px - sh.get_width() // 2 + 4 * z, py - sh.get_height() // 2 + 5 * z))
+        tur = self.rotated(zs(spr.turret[k2]), resid2, (t.tank_key, t.color, 1, k2))
         screen.blit(tur, (px - tur.get_width() // 2, py - tur.get_height() // 2))
         if t.shield > 0:
             s = self.fx_sprite("ring", t.radius * 3.4, (110, 180, 255), True, 150)

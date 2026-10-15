@@ -33,6 +33,7 @@ unidentified developer"), right-click it and choose *Open*.
 | Shop and tank swap, mid-battle | `B` |
 | Capture a zone (Zone Defense) | hold `Z` inside it |
 | Scoreboard | hold `Tab` |
+| Zoom out / in | `-` / `+` (remembered between battles) |
 | Pause / menu | `Esc` |
 | Fullscreen | `F11`, or `Cmd`+`F` on a Mac |
 | FPS counter | `F3` |

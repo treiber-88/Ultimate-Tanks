@@ -60,6 +60,10 @@ CAPTURE_REWARD = 40         # credits for bringing the enemy flag home
 RETURN_REWARD = 10          # credits for touching your own dropped flag to send it home
 DISCOVERY_PORT = 27878       # UDP: how the Join screen finds games on the local network
 
+# Camera zoom levels (fraction of full size). Each must make a 256 px ground chunk a whole number of pixels.
+ZOOMS = [1.0, 0.875, 0.75, 0.625, 0.5]
+DEFAULT_ZOOM = 0.75
+
 SHELL, AUTO = 0, 1          # weapon slots: left mouse fires the cannon, right mouse the machine gun
 
 

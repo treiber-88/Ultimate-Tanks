@@ -704,7 +704,8 @@ class Battle(Screen):
         if not self.world.mirror and self.world.time == 0.0:
             self.world.step(0.0)             # place every tank now, so the battle opens with you on the field
             self.world.events = [e for e in self.world.events if e[0] != "spawn"]
-        self.view = BattleView(app, self.world, session.pid)
+        zoom = app.profile.settings.get("zoom", data.DEFAULT_ZOOM) if app.profile else data.DEFAULT_ZOOM
+        self.view = BattleView(app, self.world, session.pid, zoom if zoom in data.ZOOMS else data.DEFAULT_ZOOM)
         self.shop = ShopView(app)
         self.shop_open = False
         self.paused = False
@@ -719,8 +720,8 @@ class Battle(Screen):
         if me:                               # start the camera on our side of the map
             z = self.world.map.zones[me.team]
             self.view.focus = (me.x, me.y) if me.alive else ((z[0] + z[2]) / 2, (z[1] + z[3]) / 2)
-            sw, sh = app.screen.get_size()
-            self.view.cam = [self.view.focus[0] - sw / 2, self.view.focus[1] - sh / 2]
+            vw, vh = self.view.view_size(app.screen.get_size())
+            self.view.cam = [self.view.focus[0] - vw / 2, self.view.focus[1] - vh / 2]
 
     # -- helpers -------------------------------------------------------------------
     def cycle(self, slot, step=1):
@@ -776,6 +777,13 @@ class Battle(Screen):
                     self.shop_open = False
                 elif not over:
                     self.paused = not self.paused
+            elif k in (pygame.K_MINUS, pygame.K_KP_MINUS, pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                zs_ = data.ZOOMS
+                i = zs_.index(self.view.z) + (1 if k in (pygame.K_MINUS, pygame.K_KP_MINUS) else -1)
+                if 0 <= i < len(zs_):
+                    self.view.set_zoom(zs_[i])
+                    app.profile.settings["zoom"] = zs_[i]
+                    app.profile.save()
             elif k == pygame.K_b and not over and not self.paused:
                 self.shop_open = not self.shop_open
                 self.shop.view = me.tank_key if me else None
@@ -808,8 +816,9 @@ class Battle(Screen):
             if thr < 0:
                 turn = -turn                      # steer like a car when reversing
             px, py = me.pivot()
-            aim = math.atan2(my + self.cam[1] - py, mx + self.cam[0] - px) % (math.pi * 2)
-            aim_dist = math.hypot(mx + self.cam[0] - px, my + self.cam[1] - py)
+            wx, wy = self.cam[0] + mx / self.view.z, self.cam[1] + my / self.view.z    # cursor in the world
+            aim = math.atan2(wy - py, wx - px) % (math.pi * 2)
+            aim_dist = math.hypot(wx - px, wy - py)
             f0, f1 = mb[0], mb[2] or keys[pygame.K_SPACE]
         self.aim_dist = aim_dist
         s.set_input(thr, turn, aim, f0, f1, aim_dist, bool(me) and not modal and keys[pygame.K_z])
@@ -904,33 +913,34 @@ class Battle(Screen):
         scr, ui = self.app.screen, self.ui
         sw, sh = scr.get_size()
         cx, cy = self.cam
+        z = self.view.z
         my_team = me.team if me else 0
         w = self.world
         marks = w.rules.marks() if w.rules else {}
         for s in w.structs:                          # headquarters / convoy truck health
-            x, y = s[2] - cx, s[3] - cy
+            x, y = (s[2] - cx) * z, (s[3] - cy) * z
             if s[5] <= 0 or not (-120 < x < sw + 120 and -120 < y < sh + 120):
                 continue
             col = (110, 210, 120) if (me and s[1] == my_team) else (255, 96, 80)
             bw = int(130 * ui.s)
-            by = int(y - s[4] - 46 * ui.s)
+            by = int(y - s[4] * z - 46 * ui.s)
             pygame.draw.rect(scr, (10, 12, 14), (x - bw // 2 - 2, by - 2, bw + 4, int(11 * ui.s) + 4))
             pygame.draw.rect(scr, col, (x - bw // 2, by, int(bw * s[5] / s[6]), int(11 * ui.s)))
             lab = ui.render("HEADQUARTERS" if s[0] == "hq" else "CONVOY", 18, col)
             scr.blit(lab, (x - lab.get_width() // 2, by - lab.get_height() - 2))
         if me and me.alive and me.pid in marks:      # our own badge, since we get no name tag
             lab = ui.render(marks[me.pid], 20, GOLD)
-            scr.blit(lab, (me.x - cx - lab.get_width() // 2, me.y - cy - me.radius - 34 * ui.s))
+            scr.blit(lab, ((me.x - cx) * z - lab.get_width() // 2, (me.y - cy - me.radius) * z - 34 * ui.s))
         for t in self.world.players.values():
             if not t.alive or t is me:
                 continue
-            x, y = t.x - cx, t.y - cy
+            x, y = (t.x - cx) * z, (t.y - cy) * z
             if not (-80 < x < sw + 80 and -80 < y < sh + 80):
                 continue
             friend = t.team == my_team
             col = (110, 210, 120) if friend else (255, 96, 80)
             bw = int(64 * ui.s)
-            by = int(y - t.radius - 26 * ui.s)
+            by = int(y - t.radius * z - 26 * ui.s)
             pygame.draw.rect(scr, (10, 12, 14), (x - bw // 2 - 1, by - 1, bw + 2, int(7 * ui.s) + 2))
             pygame.draw.rect(scr, col, (x - bw // 2, by, int(bw * max(0.0, t.hp / t.max_hp)), int(7 * ui.s)))
             name = ui.render(t.name, 18, col if not t.is_ai else tuple(int(c * 0.82) for c in col))
@@ -995,7 +1005,7 @@ class Battle(Screen):
         # credits
         ui.panel(20, 10, 250, 70, 225)
         credits_label(ui, 44, 26, me.credits, 34)
-        ui.text("B  shop    Tab  scores    Esc  menu", 24, 88, 20, DIM, bold=False)
+        ui.text("B  shop    Tab  scores    Esc  menu    - / +  zoom", 24, 88, 20, DIM, bold=False)
 
         # tank + health
         ui.panel(20, 950, 470, 116, 225)
@@ -1063,8 +1073,8 @@ class Battle(Screen):
         if me.alive:
             ui.fill(mx0 + me.x * sx - 5, my0 + me.y * sy - 5, 10, 10, (0, 0, 0))
             ui.fill(mx0 + me.x * sx - 3.5, my0 + me.y * sy - 3.5, 7, 7, (255, 255, 255))
-        vr = ui.r(mx0 + self.cam[0] * sx, my0 + self.cam[1] * sy, app.screen.get_width() * sx,
-                  app.screen.get_height() * sy)
+        vw_, vh_ = self.view.view_size(app.screen.get_size())
+        vr = ui.r(mx0 + self.cam[0] * sx, my0 + self.cam[1] * sy, vw_ * ui.s * sx, vh_ * ui.s * sy)
         pygame.draw.rect(app.screen, (255, 255, 255), vr, 1)
 
         # kill feed
@@ -1180,7 +1190,7 @@ class Battle(Screen):
             targets.append(((mine[1], mine[2]), "flag_%d" % me.team, "your flag"))
         cx, cy = self.cam
         for (wx, wy), art, label in targets:
-            px, py = wx - cx, wy - cy
+            px, py = (wx - cx) * self.view.z, (wy - cy) * self.view.z
             if 60 < px < sw - 60 and 150 < py < sh - 150:
                 continue
             ex = max(70, min(sw - 70, px))
